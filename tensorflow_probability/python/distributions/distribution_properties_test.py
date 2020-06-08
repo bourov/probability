@@ -19,7 +19,6 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
-import sys
 
 from absl.testing import parameterized
 import hypothesis as hp
@@ -38,6 +37,7 @@ from tensorflow_probability.python.internal import test_util
 
 
 TF2_FRIENDLY_DISTS = (
+    'Bates',
     'Bernoulli',
     'Beta',
     'BetaBinomial',
@@ -47,6 +47,7 @@ TF2_FRIENDLY_DISTS = (
     'CholeskyLKJ',
     'Categorical',
     'Cauchy',
+    'ContinuousBernoulli',
     'Deterministic',
     'Dirichlet',
     'DirichletMultinomial',
@@ -56,6 +57,7 @@ TF2_FRIENDLY_DISTS = (
     'FiniteDiscrete',
     'Gamma',
     'GammaGamma',
+    'GeneralizedNormal',
     'GeneralizedPareto',
     'Geometric',
     'Gumbel',
@@ -65,12 +67,14 @@ TF2_FRIENDLY_DISTS = (
     'Horseshoe',
     'InverseGamma',
     'InverseGaussian',
+    'JohnsonSU',
     'Kumaraswamy',
     'Laplace',
     'LKJ',
     'LogNormal',
     'Logistic',
     'Normal',
+    'Moyal',
     'Multinomial',
     'NegativeBinomial',
     'OneHotCategorical',
@@ -108,13 +112,9 @@ NO_KL_PARAM_GRADS = ('Deterministic',)
 # batch slicing.
 INSTANTIABLE_BUT_NOT_SLICABLE = (
     'BatchReshape',
-    'OrderedLogistic',  # b/149597503
 )
 
 EXTRA_TENSOR_CONVERSION_DISTS = {
-    # binomial rejection sampler converts many times
-    'BetaBinomial': sys.maxsize,
-    'Binomial': sys.maxsize,  # binomial rejection sampler converts many times
     'RelaxedBernoulli': 1,
     'WishartTriL': 3,  # not concretizing linear operator scale
     'Chi': 2,  # subclasses `Chi2`, runs redundant checks on `df` parameter
@@ -126,25 +126,15 @@ EXTRA_TENSOR_CONVERSION_DISTS = {
 # blacklisted by the autovectorization tests. Since not all distributions are
 # in INSTANTIABLE_BASE_DISTS, these should not be taken as exhaustive.
 SAMPLE_AUTOVECTORIZATION_IS_BROKEN = [
-    'BetaBinomial',  # No converter for While
-    'Binomial',  # No converter for While
-    'Categorical',  # No converter for SparseSoftmaxCrossEntropyWithLogits
-    'DirichletMultinomial',  # No converter for TensorListFromTensor
-    'FiniteDiscrete',  # No converter for SparseSoftmaxCrossEntropyWithLogits
-    'Gamma',  # No converter for While
-    'Multinomial',  # No converter for TensorListFromTensor
-    'OrderedLogistic',  # No converter for SparseSoftmaxCrossEntropyWithLogits
+    'Bates',  # tf.repeat and tf.range do not vectorize. (b/157665707)
+    'Gamma',  # "Incompatible shapes" error. (b/150712618).
+    'GeneralizedNormal',  # uses Gamma (above) internally
     'PlackettLuce',  # No converter for TopKV2
     'TruncatedNormal',  # No converter for ParameterizedTruncatedNormal
-    'VonMises',  # No converter for While
-    'VonMisesFisher',  # No converter for While
-    'Zipf',  # No converter for While
 ]
 
 LOGPROB_AUTOVECTORIZATION_IS_BROKEN = [
-    'Categorical',  # No converter for SparseSoftmaxCrossEntropyWithLogits
-    'FiniteDiscrete',  # No converter for SparseSoftmaxCrossEntropyWithLogits
-    'OrderedLogistic',  # No converter for SparseSoftmaxCrossEntropyWithLogits
+    'Bates',  # tf.repeat and tf.range do not vectorize. (b/157665707)
     'StudentT',  # Numerical problem: b/149785284
     'HalfStudentT',  # Numerical problem: b/149785284
     'TruncatedNormal',  # Numerical problem: b/150811273
@@ -167,6 +157,12 @@ VECTORIZED_LOGPROB_ATOL = collections.defaultdict(lambda: 1e-6)
 VECTORIZED_LOGPROB_ATOL.update({
     'CholeskyLKJ': 1e-4,
     'LKJ': 1e-3,
+    'BetaBinomial': 1e-5,
+})
+
+VECTORIZED_LOGPROB_RTOL = collections.defaultdict(lambda: 1e-6)
+VECTORIZED_LOGPROB_RTOL.update({
+    'NegativeBinomial': 1e-5,
 })
 
 
@@ -283,7 +279,7 @@ class DistributionParamsAreVarsTest(test_util.TestCase):
         grads = tape.gradient(kl, wrt_vars)
         for grad, var in zip(grads, wrt_vars):
           if grad is None and dist_name not in NO_KL_PARAM_GRADS:
-            raise AssertionError('Missing KL({} || {}) -> {} grad:\n'
+            raise AssertionError('Missing KL({} || {}) -> {} grad:\n'  # pylint: disable=duplicate-string-formatting-argument
                                  '{} vars: {}\n{} vars: {}'.format(
                                      d1, d2, var, d1, d1.variables, d2,
                                      d2.variables))
@@ -539,7 +535,7 @@ class DistributionSlicingTest(test_util.TestCase):
     hp.note('Non-packetization check {}'.format(all_non_packetized))
     hp.assume(all_packetized or all_non_packetized)
 
-    self.assertAllClose(lp[slices], sliced_lp, rtol=1e-5)
+    self.assertAllClose(lp[slices], sliced_lp, atol=1e-5, rtol=1e-5)
 
   def _run_test(self, data):
     def ok(name):
@@ -565,7 +561,7 @@ class DistributionSlicingTest(test_util.TestCase):
   def testDistributions(self, data):
     self._run_test(data)
 
-  def disabled_testFailureCase(self):
+  def disabled_testFailureCase(self):  # pylint: disable=invalid-name
     # TODO(b/140229057): This test should pass.
     dist = tfd.Chi(df=np.float32(27.744131))
     dist = tfd.TransformedDistribution(
@@ -588,15 +584,21 @@ class DistributionsWorkWithAutoVectorizationTest(test_util.TestCase):
       sample = self.evaluate(dist.sample(num_samples, seed=seed))
     else:
       sample = self.evaluate(tf.vectorized_map(
-          lambda i: dist.sample(seed=seed), tf.range(num_samples)))
+          lambda i: dist.sample(seed=seed),
+          tf.range(num_samples),
+          fallback_to_while_loop=False))
     hp.note('Drew samples {}'.format(sample))
 
     if dist_name not in LOGPROB_AUTOVECTORIZATION_IS_BROKEN:
-      pfor_lp = tf.vectorized_map(dist.log_prob, tf.convert_to_tensor(sample))
+      pfor_lp = tf.vectorized_map(
+          dist.log_prob,
+          tf.convert_to_tensor(sample),
+          fallback_to_while_loop=False)
       batch_lp = dist.log_prob(sample)
       pfor_lp_, batch_lp_ = self.evaluate((pfor_lp, batch_lp))
       self.assertAllClose(pfor_lp_, batch_lp_,
-                          atol=VECTORIZED_LOGPROB_ATOL[dist_name])
+                          atol=VECTORIZED_LOGPROB_ATOL[dist_name],
+                          rtol=VECTORIZED_LOGPROB_RTOL[dist_name])
 
   @parameterized.named_parameters(
       {'testcase_name': dname, 'dist_name': dname}

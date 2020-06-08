@@ -26,6 +26,7 @@ from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.internal import distribution_util
 from tensorflow_probability.python.sts.structural_time_series import Parameter
 from tensorflow_probability.python.sts.structural_time_series import StructuralTimeSeries
+from tensorflow.python.util import deprecation  # pylint: disable=g-direct-tensorflow-import
 
 tfl = tf.linalg
 
@@ -136,6 +137,12 @@ class LinearRegression(StructuralTimeSeries):
 
   """
 
+  @deprecation.deprecated(
+      '2020-06-01', 'Previously, the batch shape of `weights_prior` was '
+      'overridden to equal the batch shape of the design matrix when '
+      '`weights_prior.event_shape` is scalar. This behavior is deprecated, '
+      'and `weights_prior` must be defined with the desired batch shape (see '
+      'note on batch shapes in the constructor docstring).')
   def __init__(self,
                design_matrix,
                weights_prior=None,
@@ -215,7 +222,19 @@ class LinearRegression(StructuralTimeSeries):
 
       super(LinearRegression, self).__init__(
           parameters=[
-              Parameter('weights', weights_prior, tfb.Identity()),
+              Parameter(
+                  name='weights',
+                  prior=weights_prior,
+                  # If the weights prior has constrained support, then we'd like
+                  # to avoid considering invalid weights at inference time. For
+                  # example, an Exponential prior should only see nonnegative
+                  # weights. For now, we enforce this using the prior's default
+                  # bijector. Given sufficient motivation we might consider
+                  # adding a `weights_constraining_bijector` argument
+                  # to customize the bijector choice, analogous to
+                  # `sts.Autoregressive.coef_constraining_bijector`.
+                  bijector=(weights_prior  # pylint: disable=protected-access
+                            ._experimental_default_event_space_bijector())),
           ],
           latent_size=0,
           name=name)

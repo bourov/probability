@@ -37,6 +37,7 @@ py_library(
         ":convolutional_transpose_layers",
         ":layers",
         ":variational_base",
+        "//tensorflow_probability/python/experimental/nn/initializers",
         "//tensorflow_probability/python/experimental/nn/util",
     ],
 )
@@ -48,10 +49,12 @@ py_library(
     deps = [
         ":layers",
         ":variational_base",
+        # numpy dep,
         # tensorflow dep,
         "//tensorflow_probability/python/distributions:distribution",
         "//tensorflow_probability/python/distributions:normal",
         "//tensorflow_probability/python/experimental/nn/util",
+        "//tensorflow_probability/python/internal:prefer_static",
     ],
 )
 
@@ -74,6 +77,7 @@ py_library(
     deps = [
         ":layers",
         ":variational_base",
+        # numpy dep,
         # tensorflow dep,
         "//tensorflow_probability/python/distributions:distribution",
         "//tensorflow_probability/python/experimental/nn/util",

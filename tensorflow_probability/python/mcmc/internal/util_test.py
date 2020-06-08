@@ -28,6 +28,7 @@ import numpy as np
 import tensorflow.compat.v1 as tf1
 import tensorflow.compat.v2 as tf
 from tensorflow_probability.python import distributions as tfd
+from tensorflow_probability.python.internal import tensorshape_util
 from tensorflow_probability.python.internal import test_util
 from tensorflow_probability.python.mcmc.internal import util
 
@@ -206,15 +207,31 @@ class TraceScanTest(test_util.TestCase):
     final_state, trace = util.trace_scan(
         loop_fn=_loop_fn, initial_state=0, elems=[1, 2], trace_fn=_trace_fn)
 
-    self.assertAllClose([], final_state.shape.as_list())
-    self.assertAllClose([2], trace[0].shape.as_list())
-    self.assertAllClose([2], trace[1].shape.as_list())
+    self.assertAllClose([], tensorshape_util.as_list(final_state.shape))
+    self.assertAllClose([2], tensorshape_util.as_list(trace[0].shape))
+    self.assertAllClose([2], tensorshape_util.as_list(trace[1].shape))
 
     final_state, trace = self.evaluate([final_state, trace])
 
     self.assertAllClose(3, final_state)
     self.assertAllClose([1, 3], trace[0])
     self.assertAllClose([2, 6], trace[1])
+
+  @test_util.jax_disable_test_missing_functionality('b/157611426')
+  @parameterized.named_parameters(
+      ('static_length', True),
+      ('dynamic_length', False))
+  def testTraceCriterion(self, static_length):
+    final_state, trace = self.evaluate(
+        util.trace_scan(
+            loop_fn=lambda state, element: state + element,
+            initial_state=0,
+            elems=[1, 2, 3, 4, 5, 6, 7],
+            trace_fn=lambda state: state / 2,
+            trace_criterion_fn=lambda state: tf.equal(state % 2, 0),
+            static_trace_allocation_size=3 if static_length else None))
+    self.assertAllClose(7 + 6 + 5 + 4 + 3 + 2 + 1, final_state)
+    self.assertAllClose([3, 5, 14], trace)
 
 
 WrapperResults = collections.namedtuple('WrapperResults',
@@ -282,6 +299,47 @@ class IndexRemappingGatherTest(test_util.TestCase):
       for j in range(params.shape[1]):
         for k in range(params.shape[2]):
           self.assertEqual(params[indices[i, j], j, k], result_[i, j, k])
+
+  def test_params_rank3_indices_rank1_axis_1(self):
+    axis = 1
+    params = np.random.randint(10, 100, size=[4, 5, 2])
+    indices = np.random.randint(0, params.shape[axis], size=[6])
+
+    result = util.index_remapping_gather(params, indices, axis=axis)
+    self.assertAllEqual(
+        params.shape[:axis] +
+        indices.shape[:1] +
+        params.shape[axis + 1:],
+        result.shape)
+    result_ = self.evaluate(result)
+
+    for i in range(params.shape[0]):
+      for j in range(indices.shape[0]):
+        for k in range(params.shape[2]):
+          self.assertEqual(params[i, indices[j], k], result_[i, j, k])
+
+  def test_params_rank5_indices_rank3_axis_2_iaxis_1(self):
+    axis = 2
+    indices_axis = 1
+    params = np.random.randint(10, 100, size=[4, 5, 2, 3, 4])
+    indices = np.random.randint(0, params.shape[axis], size=[5, 6, 3])
+
+    result = util.index_remapping_gather(
+        params, indices, axis=axis, indices_axis=indices_axis)
+    self.assertAllEqual(
+        params.shape[:axis] +
+        indices.shape[indices_axis:indices_axis + 1] +
+        params.shape[axis + 1:],
+        result.shape)
+    result_ = self.evaluate(result)
+
+    for i in range(params.shape[0]):
+      for j in range(params.shape[1]):
+        for k in range(indices.shape[1]):
+          for l in range(params.shape[3]):
+            for m in range(params.shape[4]):
+              self.assertEqual(params[i, j, indices[j, k, l], l, m],
+                               result_[i, j, k, l, m])
 
 
 class MakeInnermostSetterTest(test_util.TestCase):

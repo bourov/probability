@@ -53,27 +53,45 @@ multi_substrate_py_library(
     name = "batched_rejection_sampler",
     srcs = ["batched_rejection_sampler.py"],
     deps = [
+        ":samplers",
         # tensorflow dep,
         "//tensorflow_probability/python/internal:prefer_static",
-        "//tensorflow_probability/python/util:seed_stream",
     ],
 )
 
 multi_substrate_py_test(
     name = "batched_rejection_sampler_test",
-    size = "small",
+    size = "medium",
     srcs = ["batched_rejection_sampler_test.py"],
-    # TODO(b/148640931): Current version produces identical random values across
-    # separate loop iterations in numpy / JAX, leading to infinite loops.
-    jax_tags = ["notap"],
-    numpy_tags = ["notap"],
     deps = [
         ":batched_rejection_sampler",
+        ":samplers",
         ":test_util",
         # numpy dep,
         # scipy dep,
         # tensorflow dep,
         "//tensorflow_probability",
+    ],
+)
+
+multi_substrate_py_library(
+    name = "cache_util",
+    srcs = ["cache_util.py"],
+    deps = [
+        # numpy dep,
+        # tensorflow dep,
+    ],
+)
+
+py_test(
+    name = "cache_util_test",
+    size = "small",
+    srcs = ["cache_util_test.py"],
+    deps = [
+        ":cache_util",
+        # numpy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
     ],
 )
 
@@ -84,8 +102,6 @@ py_library(
     ],
     srcs_version = "PY2AND3",
     deps = [
-        # numpy dep,
-        # tensorflow dep,
     ],
 )
 
@@ -155,7 +171,39 @@ py_test(
     ],
 )
 
-py_library(
+multi_substrate_py_library(
+    name = "implementation_selection",
+    srcs = ["implementation_selection.py"],
+    deps = [
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal/backend/numpy",
+    ],
+)
+
+multi_substrate_py_test(
+    name = "implementation_selection_test",
+    srcs = ["implementation_selection_test.py"],
+    deps = [
+        ":implementation_selection",
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+        # tensorflow/compiler/jit dep,
+    ],
+)
+
+py_test(
+    name = "implementation_selection_test_gpu",
+    srcs = ["implementation_selection_test.py"],
+    main = "implementation_selection_test.py",
+    tags = ["requires-gpu-nvidia"],
+    deps = [
+        ":implementation_selection",
+        "//tensorflow_probability/python/internal:test_util",
+        # tensorflow/compiler/jit dep,
+    ],
+)
+
+multi_substrate_py_library(
     name = "monte_carlo",
     srcs = ["monte_carlo.py"],
     srcs_version = "PY2AND3",
@@ -164,7 +212,7 @@ py_library(
     ],
 )
 
-py_library(
+multi_substrate_py_library(
     name = "name_util",
     srcs = ["name_util.py"],
     srcs_version = "PY2AND3",
@@ -296,7 +344,7 @@ py_test(
     ],
 )
 
-py_library(
+multi_substrate_py_library(
     name = "tensorshape_util",
     srcs = ["tensorshape_util.py"],
     srcs_version = "PY2AND3",
@@ -318,7 +366,7 @@ py_test(
     ],
 )
 
-py_library(
+multi_substrate_py_library(
     name = "vectorization_util",
     srcs = ["vectorization_util.py"],
     srcs_version = "PY2AND3",
@@ -346,6 +394,7 @@ py_test(
     name = "hypothesis_testlib_test",
     size = "small",
     srcs = ["hypothesis_testlib_test.py"],
+    shard_count = 5,
     srcs_version = "PY2AND3",
     deps = [
         ":hypothesis_testlib",
@@ -413,10 +462,12 @@ multi_substrate_py_test(
     ],
 )
 
-py_test(
+multi_substrate_py_test(
     name = "vectorization_util_test",
     size = "small",
     srcs = ["vectorization_util_test.py"],
+    jax_tags = ["notap"],
+    numpy_tags = ["notap"],
     deps = [
         ":test_util",
         ":vectorization_util",
@@ -429,6 +480,7 @@ py_test(
 exports_files(
     [
         "assert_util.py",
+        "batched_rejection_sampler.py",
         "distribution_util.py",
         "dtype_util.py",
         "dtype_util_test.py",

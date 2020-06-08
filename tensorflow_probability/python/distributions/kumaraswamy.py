@@ -162,15 +162,17 @@ class Kumaraswamy(transformed_distribution.TransformedDistribution):
           concentration1=concentration1,
           concentration0=concentration0,
           validate_args=validate_args)
+      batch_shape = distribution_util.get_broadcast_shape(
+          concentration1, concentration0)
       super(Kumaraswamy, self).__init__(
+          # TODO(b/137665504): Use batch-adding meta-distribution to set the
+          # batch shape instead of tf.zeros.
           distribution=uniform.Uniform(
-              low=tf.zeros([], dtype=dtype),
+              low=tf.zeros(batch_shape, dtype=dtype),
               high=tf.ones([], dtype=dtype),
               allow_nan_stats=allow_nan_stats),
           bijector=invert.Invert(
               self._kumaraswamy_cdf, validate_args=validate_args),
-          batch_shape=distribution_util.get_broadcast_shape(
-              concentration1, concentration0),
           parameters=parameters,
           name=name)
 
@@ -209,9 +211,9 @@ class Kumaraswamy(transformed_distribution.TransformedDistribution):
                                               tf.shape(total_concentration))
     expanded_concentration0 = tf.broadcast_to(concentration0,
                                               tf.shape(total_concentration))
-    beta_arg0 = 1 + n / expanded_concentration1
-    beta_arg = tf.stack([beta_arg0, expanded_concentration0], -1)
-    return tf.math.log(expanded_concentration0) + tf.math.lbeta(beta_arg)
+    beta_arg = 1 + n / expanded_concentration1
+    return (tf.math.log(expanded_concentration0) +
+            tfp_math.lbeta(beta_arg, expanded_concentration0))
 
   def _mean(self):
     return tf.exp(self._log_moment(1))

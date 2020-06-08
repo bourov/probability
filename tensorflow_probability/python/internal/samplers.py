@@ -28,7 +28,6 @@ import six
 import tensorflow.compat.v2 as tf
 
 __all__ = [
-    'binomial',
     'categorical',
     'gamma',
     'normal',
@@ -47,6 +46,8 @@ SEED_DTYPE = np.uint32 if JAX_MODE else np.int32
 
 def sanitize_seed(seed, salt=None):
   """Map various types to a seed `Tensor`."""
+  if callable(seed):  # e.g. SeedStream.
+    seed = seed()
   if salt is not None and not isinstance(salt, str):
     raise TypeError('`salt` must be a python `str`, got {}'.format(repr(salt)))
   if seed is None or isinstance(seed, six.integer_types):
@@ -77,30 +78,19 @@ def sanitize_seed(seed, salt=None):
 
 def split_seed(seed, n=2, salt=None, name=None):
   """Splits a seed deterministically into derived seeds."""
-  if not isinstance(n, int):  # avoid confusion with salt.
-    raise TypeError('`n` must be a python `int`, got {}'.format(repr(n)))
+  if not (isinstance(n, int) or tf.is_tensor(n)):  # avoid confusion with salt.
+    raise TypeError(
+        '`n` must be a python `int` or an int Tensor, got {}'.format(repr(n)))
   with tf.name_scope(name or 'split'):
     seed = sanitize_seed(seed, salt=salt)
     if JAX_MODE:
       from jax import random as jaxrand  # pylint: disable=g-import-not-at-top
       return jaxrand.split(seed, n)
-    return tf.unstack(tf.random.stateless_uniform(
-        [n, 2], seed=seed, minval=None, maxval=None, dtype=SEED_DTYPE))
-
-
-def binomial(
-    shape,
-    counts,
-    probs,
-    output_dtype=tf.int32,
-    seed=None,
-    name=None):
-  """As `tf.random.Generator.binomial`, handling stateful/stateless `seed`s."""
-  with tf.name_scope(name or 'binomial'):
-    seed = sanitize_seed(seed)
-    return tf.random.stateless_binomial(
-        shape=shape, seed=seed, counts=counts, probs=probs,
-        output_dtype=output_dtype)
+    seeds = tf.random.stateless_uniform(
+        [n, 2], seed=seed, minval=None, maxval=None, dtype=SEED_DTYPE)
+    if isinstance(n, six.integer_types):
+      seeds = tf.unstack(seeds)
+    return seeds
 
 
 def categorical(
@@ -126,8 +116,15 @@ def gamma(
   """As `tf.random.gamma`, but handling stateful/stateless `seed`s."""
   with tf.name_scope(name or 'gamma'):
     seed = sanitize_seed(seed)
+    alpha = tf.convert_to_tensor(alpha, dtype=dtype)
+    beta = None if beta is None else tf.convert_to_tensor(beta, dtype=dtype)
+    params_shape = tf.shape(alpha)
+    if beta is not None:
+      params_shape = tf.broadcast_dynamic_shape(params_shape, tf.shape(beta))
+    shape = tf.convert_to_tensor(shape, dtype=params_shape.dtype)
+    samples_shape = tf.concat([shape, params_shape], axis=0)
     return tf.random.stateless_gamma(
-        shape=shape, seed=seed, alpha=alpha, beta=beta, dtype=dtype)
+        shape=samples_shape, seed=seed, alpha=alpha, beta=beta, dtype=dtype)
 
 
 def normal(
@@ -158,8 +155,11 @@ def poisson(
   """As `tf.random.poisson`, but handling stateful/stateless `seed`s."""
   with tf.name_scope(name or 'poisson'):
     seed = sanitize_seed(seed)
+    lam_shape = tf.shape(lam)
+    shape = tf.convert_to_tensor(shape, dtype=lam_shape.dtype)
+    sample_shape = tf.concat([shape, lam_shape], axis=0)
     return tf.random.stateless_poisson(
-        shape=shape, seed=seed, lam=lam, dtype=dtype)
+        shape=sample_shape, seed=seed, lam=lam, dtype=dtype)
 
 
 def shuffle(

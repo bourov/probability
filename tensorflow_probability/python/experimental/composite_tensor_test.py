@@ -196,7 +196,7 @@ class CompositeTensorTest(tfp_test_util.TestCase):
     # Eliminate cached classes, forcing breakage on load.
     clsid_registry.clear()
     with self.assertRaisesRegexp(
-        ValueError, r'For non-builtin.*call `as_composite` before'):
+        ValueError, r'For user-defined.*decorated.*register_composite'):
       tf.saved_model.load(os.path.join(path, 'saved_model1'))
 
     tfp.experimental.as_composite(Normal(0, 1))
@@ -204,15 +204,19 @@ class CompositeTensorTest(tfp_test_util.TestCase):
     m2 = tf.saved_model.load(os.path.join(path, 'saved_model1'))
     self.evaluate(m2.make_dist().sample())
 
+    # Eliminate cached classes again, but now register Normal as if it had been
+    # decorated from the beginning.
+    clsid_registry.clear()
+    self.assertEqual(Normal, tfp.experimental.register_composite(Normal))
+
+    # Loading should work again.
+    m3 = tf.saved_model.load(os.path.join(path, 'saved_model1'))
+    self.evaluate(m3.make_dist().sample())
+
   def test_not_implemented(self):
     with self.assertRaisesRegexp(NotImplementedError,
                                  r'Unable.*sigmoidNormal.*file an issue'):
       tfp.experimental.as_composite(tfb.Sigmoid()(tfd.Normal(0, 1)))
-
-    with self.assertRaisesRegexp(NotImplementedError,
-                                 r'Unable.*IndependentNormal.*file an issue'):
-      tfp.experimental.as_composite(
-          tfd.Independent(tfd.Normal(0, tf.ones([10])), 1))
 
     outcomes = tf.Variable([1., 2., 4.])
     self.evaluate(outcomes.initializer)
@@ -229,6 +233,18 @@ class CompositeTensorTest(tfp_test_util.TestCase):
     d2 = tfp.experimental.as_composite(d1)
     self.assertIsNot(d, d1)
     self.assertIs(d1, d2)
+
+  def test_basics_mixture_same_family(self):
+    gm = tfd.MixtureSameFamily(
+        mixture_distribution=tfd.Categorical(probs=[0.3, 0.7]),
+        components_distribution=tfd.Normal(
+            loc=[-1., 1],
+            scale=[0.1, 0.5]))
+    dist = tfp.experimental.as_composite(gm)
+    flat = tf.nest.flatten(dist, expand_composites=True)
+    unflat = tf.nest.pack_sequence_as(dist, flat, expand_composites=True)
+    self.evaluate(unflat.sample())
+    self.evaluate(unflat.log_prob(.5))
 
 
 if __name__ == '__main__':

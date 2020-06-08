@@ -41,6 +41,7 @@ from tensorflow_probability.python.bijectors.ffjord import FFJORD
 from tensorflow_probability.python.bijectors.fill_scale_tril import FillScaleTriL
 from tensorflow_probability.python.bijectors.fill_scale_tril import ScaleTriL
 from tensorflow_probability.python.bijectors.fill_triangular import FillTriangular
+from tensorflow_probability.python.bijectors.frechet_cdf import FrechetCDF
 from tensorflow_probability.python.bijectors.generalized_pareto import GeneralizedPareto
 from tensorflow_probability.python.bijectors.gumbel_cdf import GumbelCDF
 from tensorflow_probability.python.bijectors.identity import Identity
@@ -54,6 +55,7 @@ from tensorflow_probability.python.bijectors.masked_autoregressive import masked
 from tensorflow_probability.python.bijectors.masked_autoregressive import masked_dense
 from tensorflow_probability.python.bijectors.masked_autoregressive import MaskedAutoregressiveFlow
 from tensorflow_probability.python.bijectors.matrix_inverse_tril import MatrixInverseTriL
+from tensorflow_probability.python.bijectors.moyal_cdf import MoyalCDF
 from tensorflow_probability.python.bijectors.normal_cdf import NormalCDF
 from tensorflow_probability.python.bijectors.ordered import Ordered
 from tensorflow_probability.python.bijectors.pad import Pad
@@ -72,12 +74,14 @@ from tensorflow_probability.python.bijectors.scale_matvec_lu import ScaleMatvecL
 from tensorflow_probability.python.bijectors.scale_matvec_tril import ScaleMatvecTriL
 from tensorflow_probability.python.bijectors.shift import Shift
 from tensorflow_probability.python.bijectors.sigmoid import Sigmoid
+from tensorflow_probability.python.bijectors.sinh import Sinh
 from tensorflow_probability.python.bijectors.sinh_arcsinh import SinhArcsinh
 from tensorflow_probability.python.bijectors.soft_clip import SoftClip
 from tensorflow_probability.python.bijectors.softfloor import Softfloor
 from tensorflow_probability.python.bijectors.softmax_centered import SoftmaxCentered
 from tensorflow_probability.python.bijectors.softplus import Softplus
 from tensorflow_probability.python.bijectors.softsign import Softsign
+from tensorflow_probability.python.bijectors.split import Split
 from tensorflow_probability.python.bijectors.square import Square
 from tensorflow_probability.python.bijectors.tanh import Tanh
 from tensorflow_probability.python.bijectors.transform_diagonal import TransformDiagonal
@@ -107,6 +111,7 @@ __all__ = [
     "FFJORD",
     "FillScaleTriL",
     "FillTriangular",
+    "FrechetCDF",
     "GeneralizedPareto",
     "GumbelCDF",
     "Identity",
@@ -120,6 +125,7 @@ __all__ = [
     "MaskedAutoregressiveFlow",
     "MatrixInverseTriL",
     "MatvecLU",
+    "MoyalCDF",
     "NormalCDF",
     "Ordered",
     "Pad",
@@ -137,12 +143,14 @@ __all__ = [
     "ScaleTriL",
     "Shift",
     "Sigmoid",
+    "Sinh",
     "SinhArcsinh",
     "SoftClip",
     "Softfloor",
     "SoftmaxCentered",
     "Softplus",
     "Softsign",
+    "Split",
     "Square",
     "Tanh",
     "TransformDiagonal",
