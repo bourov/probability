@@ -29,6 +29,7 @@ from tensorflow_probability.python.internal import dtype_util
 from tensorflow_probability.python.internal import prefer_static
 from tensorflow_probability.python.internal import tensor_util
 from tensorflow_probability.python.internal import tensorshape_util
+from tensorflow.python.util import deprecation  # pylint: disable=g-direct-tensorflow-import
 
 __all__ = [
     'TransformedDistribution',
@@ -167,6 +168,17 @@ class TransformedDistribution(distribution_lib.Distribution):
 
   """
 
+  @deprecation.deprecated_args(
+      '2020-06-01', '`batch_shape` and `event_shape` args are deprecated. '
+      'Please use `tfd.Sample`, `tfd.Independent`, and broadcasted parameters '
+      'of the base distribution instead. For example, replace '
+      '`tfd.TransformedDistribution(tfd.Normal(0., 1.), tfb.Exp(), '
+      'batch_shape=[2, 3], event_shape=[4])` with '
+      '`tfd.TransformedDistrbution(tfd.Sample(tfd.Normal(tf.zeros([2, 3]), 1.),'
+      'sample_shape=[4]), tfb.Exp())` or '
+      '`tfd.TransformedDistribution(tfd.Independent(tfd.Normal('
+      'tf.zeros([2, 3, 4]), 1.), reinterpreted_batch_ndims=1), tfb.Exp())`.',
+      'batch_shape', 'event_shape')
   def __init__(self,
                distribution,
                bijector,
@@ -404,6 +416,11 @@ class TransformedDistribution(distribution_lib.Distribution):
     # the left of the batch dims and we'll need to cyclically permute left the
     # new dims (in `_maybe_rotate_dims`). If these conditions do not hold, this
     # function returns `False` and no rotation is needed.
+    if self._base_is_joint:
+      # `prefer_static` can't handle nested structures like
+      # `base_is_scalar_batch` and shape overrides are not supported if the base
+      # distribution is joint.
+      return False
     return prefer_static.reduce_all([
         self._has_nonzero_rank(override_event_shape),
         prefer_static.logical_not(

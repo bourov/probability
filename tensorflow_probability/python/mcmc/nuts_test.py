@@ -167,7 +167,7 @@ class NutsTest(test_util.TestCase):
                                    trace_fn=trace_fn,
                                    parallel_iterations=1)[1]
     log_accept_ratio_trace = self.evaluate(sample_from_banana())
-    self.assertAllGreater(log_accept_ratio_trace, -0.2)
+    self.assertAllGreater(log_accept_ratio_trace, -0.35)
 
   def testReproducibility(self):
     seed = test_util.test_seed()
@@ -359,31 +359,38 @@ class NutsTest(test_util.TestCase):
 
   def testCorrelated2dNormalwithinMCError(self):
     strm = test_util.test_seed_stream()
+    dtype = np.float64
+
+    # We run nreplica independent test to improve test robustness.
+    nreplicas = 20
     nchains = 100
     num_steps = 1000
-    mu = np.asarray([0., 3.], dtype=np.float32)
+    mu = np.asarray([0., 3.], dtype=dtype)
     rho = 0.75
-    sigma1 = np.float32(1.)
-    sigma2 = np.float32(2.)
+    sigma1 = 1.
+    sigma2 = 2.
     cov = np.asarray([[sigma1 * sigma1, rho * sigma1 * sigma2],
                       [rho * sigma1 * sigma2, sigma2 * sigma2]],
-                     dtype=np.float32)
+                     dtype=dtype)
     true_param = np.hstack([mu, np.array([sigma1**2, sigma2**2, rho])])
     scale_tril = np.linalg.cholesky(cov)
-    initial_state = np.zeros((nchains, 2), np.float32)
+    initial_state = np.zeros((nchains, nreplicas, 2), dtype)
 
     @tf.function(autograph=False)
     def run_chain_and_get_estimation_error():
+      target_log_prob = tfd.MultivariateNormalTriL(
+          loc=mu, scale_tril=scale_tril).log_prob
+      nuts_kernel = tfp.mcmc.NoUTurnSampler(
+          target_log_prob,
+          step_size=tf.constant([sigma1, sigma2], dtype),
+          parallel_iterations=1,
+          seed=strm())
       chain_state = tfp.mcmc.sample_chain(
           num_results=num_steps,
-          num_burnin_steps=0,
+          num_burnin_steps=20,
           current_state=initial_state,
-          kernel=tfp.mcmc.NoUTurnSampler(
-              tfd.MultivariateNormalTriL(loc=mu,
-                                         scale_tril=scale_tril).log_prob,
-              step_size=np.asarray([sigma1, sigma2]),
-              parallel_iterations=1,
-              seed=strm()),
+          kernel=tfp.mcmc.DualAveragingStepSizeAdaptation(
+              nuts_kernel, 20, .8),
           parallel_iterations=1,
           trace_fn=None)
       variance_est = tf.square(chain_state - mu)
@@ -401,14 +408,22 @@ class NutsTest(test_util.TestCase):
       scaled_error = (
           tf.abs(expected - true_param) / avg_monte_carlo_standard_error)
 
-      return tfd.Normal(loc=0., scale=1.).survival_function(scaled_error)
+      return tfd.Normal(
+          loc=tf.zeros([], dtype), scale=1.).survival_function(scaled_error)
 
-    # Probability of getting an error more extreme than this
-    error_prob = self.evaluate(run_chain_and_get_estimation_error())
+    # Run chains, compute the error, and compute the probability of getting
+    # a more extreme error. `error_prob` has shape (nreplica * 5)
+    error_prob = run_chain_and_get_estimation_error()
 
     # Check convergence using Markov chain central limit theorem, this is a
     # z-test at p=.01
-    self.assertAllGreater(error_prob, 0.005)
+    is_converged = error_prob > .005
+    # Test at most 5% test fail out of total number of independent tests.
+    n_total_tests = nreplicas * len(true_param)
+    num_test_failed = self.evaluate(
+        tf.math.reduce_sum(tf.cast(is_converged, dtype)))
+    self.assertLessEqual(
+        n_total_tests - num_test_failed, np.round(n_total_tests * .05))
 
   @parameterized.parameters(
       (7, 5, 3, None),
@@ -467,8 +482,11 @@ class NutsTest(test_util.TestCase):
     # Test that we observe a fair among of divergence.
     self.assertAllGreater(divergence_count, 100)
 
-  def testSampleEndtoEnd(self):
+  def testSampleEndtoEndXLA(self):
     """An end-to-end test of sampling using NUTS."""
+    if tf.executing_eagerly() or tf.config.experimental_functions_run_eagerly():
+      self.skipTest('No need to test XLA under all execution regimes.')
+
     strm = test_util.test_seed_stream()
     predictors = tf.cast([
         201., 244., 47., 287., 203., 58., 210., 202., 198., 158., 165., 201.,
@@ -504,8 +522,11 @@ class NutsTest(test_util.TestCase):
 
     number_of_steps, burnin, nchain = 200, 50, 10
 
-    @tf.function(autograph=False)
+    @tf.function(autograph=False, experimental_compile=True)
     def run_chain_and_get_diagnostic():
+      # Ensure we're really in graph mode.
+      assert hasattr(tf.constant([]), 'graph')
+
       # random initialization of the starting postion of each chain
       b0, b1, df, _ = robust_lm.sample(nchain, seed=strm())
 

@@ -24,12 +24,12 @@ import numpy as np
 import tensorflow.compat.v2 as tf
 import tensorflow_probability as tfp
 
-from tensorflow_probability.python.experimental import nn
 from tensorflow_probability.python.internal import test_util
 
 
 tfb = tfp.bijectors
 tfd = tfp.distributions
+tfn = tfp.experimental.nn
 
 
 class BnnEndToEnd(object):
@@ -47,7 +47,7 @@ class BnnEndToEnd(object):
                           maxval=1, dtype=tf.float32),
         tf.math.softmax(tf.random.normal([train_size] + target_shape)),
     ))
-    train_dataset = nn.util.tune_dataset(
+    train_dataset = tfn.util.tune_dataset(
         train_dataset,
         batch_size=batch_size,
         shuffle_size=int(train_size / 7))
@@ -56,23 +56,18 @@ class BnnEndToEnd(object):
 
     scale = tfp.util.TransformedVariable(1., tfb.Softplus())
     n = tf.cast(train_size, tf.float32)
-    bnn = nn.Sequential([
+    bnn = tfn.Sequential([
         make_conv(evidence_shape[-1], 32, filter_shape=7, strides=2,
-                  penalty_weight=1. / n),
-        tf.nn.elu,
-        # nn.util.trace('conv1'),    # [b, 14, 14, 32]
-        nn.util.flatten_rightmost(ndims=3),
-        # nn.util.trace('flat1'),    # [b, 14 * 14 * 32]
-        nn.AffineVariationalReparameterization(
+                  penalty_weight=1. / n),      # [b, 14, 14, 32]
+        tfn.util.flatten_rightmost(ndims=3),    # [b, 14 * 14 * 32]
+        tfn.AffineVariationalReparameterization(
             14 * 14 * 32, np.prod(target_shape) - 1,
-            penalty_weight=1. / n),
-        # nn.util.trace('affine1'),  # [b, 9]
-        nn.Lambda(
+            penalty_weight=1. / n),            # [b, 9]
+        tfn.Lambda(
             eval_fn=lambda loc: tfb.SoftmaxCentered()(  # pylint: disable=g-long-lambda
                 tfd.Independent(tfd.Normal(loc, scale),
                                 reinterpreted_batch_ndims=1)),
-            also_track=scale),
-        # nn.util.trace('head'),     # [b, 10]
+            also_track=scale),                 # [b, 10]
     ], name='bayesian_autoencoder')
 
     self.evaluate([v.initializer for v in bnn.trainable_variables])
@@ -86,7 +81,7 @@ class BnnEndToEnd(object):
       kl = bnn.extra_loss  # Already normalized.
       return nll + kl, (nll, kl)
     opt = tf.optimizers.Adam()
-    fit_op = nn.util.make_fit_op(loss_fn, opt, bnn.trainable_variables)
+    fit_op = tfn.util.make_fit_op(loss_fn, opt, bnn.trainable_variables)
     for _ in range(2):
       loss, (nll, kl) = fit_op()  # pylint: disable=unused-variable
 
@@ -106,10 +101,11 @@ class ConvolutionVariationalReparameterizationTest(
     if not tf.executing_eagerly():
       self.skipTest('Skipping graph mode test since we simulate user behavior.')
     make_conv = functools.partial(
-        nn.ConvolutionVariationalReparameterization,
+        tfn.ConvolutionVariationalReparameterization,
         rank=2,
         padding='same',
-        init_kernel_fn=tf.initializers.he_uniform())
+        init_kernel_fn=tfn.initializers.he_uniform(),
+        activation_fn=tf.nn.elu)
     self.run_bnn_test(make_conv)
 
 
@@ -120,10 +116,11 @@ class ConvolutionVariationalFlipoutTest(test_util.TestCase, BnnEndToEnd):
     if not tf.executing_eagerly():
       self.skipTest('Skipping graph mode test since we simulate user behavior.')
     make_conv = functools.partial(
-        nn.ConvolutionVariationalFlipout,
+        tfn.ConvolutionVariationalFlipout,
         rank=2,
         padding='same',
-        init_kernel_fn=tf.initializers.he_uniform())
+        init_kernel_fn=tfn.initializers.he_uniform(),
+        activation_fn=tf.nn.elu)
     self.run_bnn_test(make_conv)
 
 

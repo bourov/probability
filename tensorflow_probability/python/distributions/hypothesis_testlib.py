@@ -53,6 +53,7 @@ SPECIAL_DISTS = (
     'Distribution',
     'Empirical',
     'Independent',
+    'Mixture',
     'MixtureSameFamily',
     'TransformedDistribution',
 )
@@ -143,6 +144,17 @@ def fix_wishart(d):
   return dict(d, df=tf.maximum(df, tf.cast(scale.shape[-1], df.dtype)))
 
 
+def fix_bates(d):
+  total_count = tf.math.maximum(
+      tf.math.minimum(
+          d['total_count'],
+          tfd.bates.BATES_TOTAL_COUNT_STABILITY_LIMITS[  # pylint: disable=protected-access
+              d['total_count'].dtype]),
+      1.)
+  high = ensure_high_gt_low(d['low'], d['high'])
+  return dict(d, total_count=total_count, high=high)
+
+
 CONSTRAINTS = {
     'atol':
         tf.math.softplus,
@@ -162,6 +174,8 @@ CONSTRAINTS = {
         tfp_hps.softplus_plus_eps(),
     'InverseGaussian.loc':
         tfp_hps.softplus_plus_eps(),
+    'JohnsonSU.tailweight':
+        tfp_hps.softplus_plus_eps(),
     'VonMisesFisher.mean_direction':  # max ndims is 3 to avoid instability.
         lambda x: tf.math.l2_normalize(tf.math.sigmoid(x[..., :3]) + 1e-6, -1),
     'Categorical.probs':
@@ -178,6 +192,8 @@ CONSTRAINTS = {
         tf.math.softmax,
     'Zipf.power':
         tfp_hps.softplus_plus_eps(1 + 1e-6),  # strictly > 1
+    'ContinuousBernoulli.probs':
+        tf.sigmoid,
     'Geometric.logits':  # TODO(b/128410109): re-enable down to -50
         # Capping at 15. so that probability is less than 1, and entropy is
         # defined. b/147394924
@@ -223,6 +239,8 @@ CONSTRAINTS = {
         tfp_hps.softplus_plus_eps(),
     'total_count':
         lambda x: tf.floor(tf.sigmoid(x / 100) * 100) + 1,
+    'Bates':
+        fix_bates,
     'Bernoulli':
         lambda d: dict(d, dtype=tf.float32),
     'CholeskyLKJ':
@@ -245,6 +263,8 @@ CONSTRAINTS = {
         lambda d: dict(d, dtype=tf.float32),
     'FiniteDiscrete':
         fix_finite_discrete,
+    'GeneralizedNormal.power':
+        tfp_hps.softplus_plus_eps(),
 }
 
 
@@ -326,6 +346,7 @@ del _instantiable_base_dists
 INSTANTIABLE_META_DISTS = (
     'BatchReshape',
     'Independent',
+    'Mixture',
     'MixtureSameFamily',
     'TransformedDistribution',
     'QuantizedDistribution',
@@ -497,11 +518,11 @@ def base_distributions(draw,
       (or an arbitrary one if omitted).
   """
   if dist_name is None:
-    names = [k for k in INSTANTIABLE_BASE_DISTS.keys() if eligibility_filter(k)]
+    names = [k for k in INSTANTIABLE_BASE_DISTS if eligibility_filter(k)]
     dist_name = draw(hps.sampled_from(sorted(names)))
 
   if dist_name == 'Empirical':
-    variants = [k for k in INSTANTIABLE_BASE_DISTS.keys()
+    variants = [k for k in INSTANTIABLE_BASE_DISTS
                 if eligibility_filter(k) and 'Empirical' in k]
     dist_name = draw(hps.sampled_from(sorted(variants)))
 
@@ -530,7 +551,7 @@ def base_distributions(draw,
         isinstance(params_kwargs[k], (tfp_util.DeferredTensor, tf.Variable)) and
         params_kwargs[k] is not params_constrained[k]):
 
-      def constrained_value(v, val=params_constrained[k]):
+      def constrained_value(v, val=params_constrained[k]):  # pylint: disable=cell-var-from-loop
         # While the gradient to v will be 0, we only care about the c2t counts.
         return v * 0 + val
 
@@ -749,6 +770,8 @@ def transformed_distributions(draw,
   if batch_shape is None:
     batch_shape = draw(tfp_hps.shapes())
   underlying_batch_shape = batch_shape
+  # TODO(b/151180729): Remove `batch_shape_arg` when `TransformedDistribution`
+  # shape overrides are deprecated.
   batch_shape_arg = None
   if draw(hps.booleans()):
     # Use batch_shape overrides.
@@ -766,8 +789,6 @@ def transformed_distributions(draw,
   hp.note('Forming TransformedDistribution with '
           'underlying distribution {}; parameters {}'.format(
               to_transform, params_used(to_transform)))
-  # TODO(bjp): Add test coverage for `event_shape` argument of
-  # `TransformedDistribution`.
   result_dist = tfd.TransformedDistribution(
       bijector=bijector,
       distribution=to_transform,
@@ -963,6 +984,81 @@ def mixtures_same_family(draw,
 
 
 @hps.composite
+def mixtures(draw,
+             batch_shape=None,
+             event_dim=None,
+             enable_vars=False,
+             depth=None,
+             eligibility_filter=lambda name: True,
+             validate_args=True):
+  """Strategy for drawing `Mixture` distributions.
+
+  The component distributions are drawn from the `distributions` strategy.
+
+  Args:
+    draw: Hypothesis strategy sampler supplied by `@hps.composite`.
+    batch_shape: An optional `TensorShape`.  The batch shape of the resulting
+      `MixtureSameFamily` distribution.  The component distribution will have a
+      batch shape of 1 rank higher (for the components being mixed).  Hypothesis
+      will pick a batch shape if omitted.
+    event_dim: Optional Python int giving the size of each of the component
+      distribution's parameters' event dimensions.  This is shared across all
+      parameters, permitting square event matrices, compatible location and
+      scale Tensors, etc. If omitted, Hypothesis will choose one.
+    enable_vars: TODO(bjp): Make this `True` all the time and put variable
+      initialization in slicing_test.  If `False`, the returned parameters are
+      all `tf.Tensor`s and not {`tf.Variable`, `tfp.util.DeferredTensor`
+      `tfp.util.TransformedVariable`}
+    depth: Python `int` giving maximum nesting depth of compound Distributions.
+    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+      class names so they will not be drawn.
+    validate_args: Python `bool`; whether to enable runtime assertions.
+
+  Returns:
+    dists: A strategy for drawing `Mixture` distributions with the specified
+      `batch_shape` (or an arbitrary one if omitted).
+  """
+  if depth is None:
+    depth = draw(depths())
+
+  if batch_shape is None:
+    batch_shape = draw(tfp_hps.shapes())
+  if event_dim is None:
+    event_dim = draw(hps.integers(min_value=2, max_value=6))
+
+  component_strategy = distributions(
+      batch_shape=batch_shape,
+      event_dim=event_dim,
+      enable_vars=enable_vars,
+      eligibility_filter=eligibility_filter,
+      depth=depth - 1)
+  # Must ensure matching event shapes and dtypes.
+  c0 = draw(component_strategy)
+  components = [c0] + draw(hps.lists(
+      component_strategy.filter(
+          lambda d: (d.event_shape, d.dtype) == (c0.event_shape, c0.dtype)),
+      min_size=1, max_size=5))
+  hp.note('Drawing Mixture with components {}; parameters {}'.format(
+      components, [params_used(c) for c in components]))
+  cat = draw(base_distributions(
+      dist_name='Categorical',
+      batch_shape=batch_shape,
+      event_dim=len(components),
+      enable_vars=enable_vars,
+      validate_args=validate_args))
+  hp.note('Forming Mixture with cat distribution {}; parameters {}'.format(
+      cat, params_used(cat)))
+  result_dist = tfd.Mixture(
+      cat=cat, components=components,
+      validate_args=validate_args, use_static_graph=draw(hps.booleans()))
+  if batch_shape != result_dist.batch_shape:
+    msg = ('Mixture strategy generated a bad batch shape for {}, should have'
+           ' been {}.').format(result_dist, batch_shape)
+    raise AssertionError(msg)
+  return result_dist
+
+
+@hps.composite
 def distributions(draw,
                   dist_name=None,
                   batch_shape=None,
@@ -1033,6 +1129,10 @@ def distributions(draw,
         eligibility_filter, validate_args))
   if dist_name == 'MixtureSameFamily':
     return draw(mixtures_same_family(
+        batch_shape, event_dim, enable_vars, depth,
+        eligibility_filter, validate_args))
+  if dist_name == 'Mixture':
+    return draw(mixtures(
         batch_shape, event_dim, enable_vars, depth,
         eligibility_filter, validate_args))
   if dist_name == 'TransformedDistribution':

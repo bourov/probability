@@ -80,7 +80,6 @@ multi_substrate_py_test(
     size = "small",
     srcs = ["diagnostic_test.py"],
     jax_size = "medium",
-    numpy_tags = ["notap"],
     deps = [
         # numpy dep,
         # tensorflow dep,
@@ -165,6 +164,7 @@ py_library(
         "//tensorflow_probability/python/internal:tensorshape_util",
         "//tensorflow_probability/python/math:generic",
         "//tensorflow_probability/python/mcmc/internal:leapfrog_integrator",
+        "//tensorflow_probability/python/mcmc/internal:util",
         "//tensorflow_probability/python/util:seed_stream",
     ],
 )
@@ -182,6 +182,7 @@ py_library(
         "//tensorflow_probability/python/distributions/internal:statistical_testing",
         "//tensorflow_probability/python/internal:assert_util",
         "//tensorflow_probability/python/internal:test_util",
+#         "//third_party/tensorflow/compiler/jit:xla_cpu_jit",  # DisableOnExport
     ],
 )
 
@@ -274,7 +275,6 @@ multi_substrate_py_test(
     name = "metropolis_hastings_test",
     size = "small",
     srcs = ["metropolis_hastings_test.py"],
-    numpy_tags = ["notap"],
     deps = [
         # numpy dep,
         # tensorflow dep,
@@ -302,7 +302,6 @@ multi_substrate_py_test(
     size = "medium",
     srcs = ["random_walk_metropolis_test.py"],
     jax_tags = ["notap"],
-    numpy_tags = ["notap"],
     deps = [
         # numpy dep,
         # tensorflow dep,
@@ -333,7 +332,7 @@ multi_substrate_py_test(
     srcs = ["replica_exchange_mc_test.py"],
     jax_tags = ["notap"],
     numpy_tags = ["notap"],
-    shard_count = 6,
+    shard_count = 11,
     deps = [
         # absl/logging dep,
         # numpy dep,

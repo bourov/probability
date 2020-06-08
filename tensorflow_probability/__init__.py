@@ -53,7 +53,7 @@ def _ensure_tf_install():  # pylint: disable=g-statement-before-imports
   #
   # Update this whenever we need to depend on a newer TensorFlow release.
   #
-  required_tensorflow_version = "2.1"
+  required_tensorflow_version = "2.2"
 #   required_tensorflow_version = "1.15"  # Needed internally -- DisableOnExport
 
   if (distutils.version.LooseVersion(tf.__version__) <
@@ -73,6 +73,7 @@ del _ensure_tf_install
 
 
 # from tensorflow_probability.google import staging  # DisableOnExport
+# from tensorflow_probability.google import tfp_google  # DisableOnExport
 from tensorflow_probability.python import *  # pylint: disable=wildcard-import
 from tensorflow_probability.python.version import __version__
 # pylint: enable=g-import-not-at-top

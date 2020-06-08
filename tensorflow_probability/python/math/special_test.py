@@ -24,6 +24,7 @@ from scipy import special as scipy_special
 import tensorflow.compat.v2 as tf
 import tensorflow_probability as tfp
 
+from tensorflow_probability.python import math as tfp_math
 from tensorflow_probability.python.internal import test_util
 
 
@@ -39,7 +40,7 @@ def _w0(z):
   return scipy_special.lambertw(z, k=0)
 
 
-class LambertWTest(test_util.TestCase):
+class SpecialTest(test_util.TestCase):
 
   # See https://en.wikipedia.org/wiki/Lambert_W_function#Special_values
   # for a list of special values and known identities.
@@ -97,7 +98,115 @@ class LambertWTest(test_util.TestCase):
     dy_dx = g.gradient(y, x)
     self.assertAllClose(dy_dx, expected)
 
+  def testLogGammaCorrection(self):
+    x = tfp.distributions.HalfCauchy(loc=8., scale=10.).sample(
+        10000, test_util.test_seed())
+    pi = 3.14159265
+    stirling = x * tf.math.log(x) - x + 0.5 * tf.math.log(2 * pi / x)
+    tfp_gamma_ = stirling + tfp_math.log_gamma_correction(x)
+    tf_gamma, tfp_gamma = self.evaluate([tf.math.lgamma(x), tfp_gamma_])
+    self.assertAllClose(tf_gamma, tfp_gamma, atol=0, rtol=1e-6)
+
+  def testLogGammaDifference(self):
+    y = tfp.distributions.HalfCauchy(loc=8., scale=10.).sample(
+        10000, test_util.test_seed())
+    y_64 = tf.cast(y, tf.float64)
+    # Not testing x near zero because the naive method is too inaccurate.
+    # We will get implicit coverage in testLogBeta, where a good reference
+    # implementation is available (scipy_special.betaln).
+    x = tfp.distributions.Uniform(low=4., high=12.).sample(
+        10000, test_util.test_seed())
+    x_64 = tf.cast(x, tf.float64)
+    naive_64_ = tf.math.lgamma(y_64) - tf.math.lgamma(x_64 + y_64)
+    naive_64, sophisticated, sophisticated_64 = self.evaluate(
+        [naive_64_, tfp_math.log_gamma_difference(x, y),
+         tfp_math.log_gamma_difference(x_64, y_64)])
+    # Check that we're in the ballpark of the definition (which has to be
+    # computed in double precision because it's so inaccurate).
+    self.assertAllClose(naive_64, sophisticated_64, atol=1e-6, rtol=4e-4)
+    # Check that we don't lose accuracy in single precision, at least relative
+    # to ourselves.
+    self.assertAllClose(sophisticated, sophisticated_64, atol=1e-8, rtol=1e-6)
+
+  def testLogGammaDifferenceGradient(self):
+    def simple_difference(x, y):
+      return tf.math.lgamma(y) - tf.math.lgamma(x + y)
+    y = tfp.distributions.HalfCauchy(loc=8., scale=10.).sample(
+        10000, test_util.test_seed())
+    x = tfp.distributions.Uniform(low=0., high=8.).sample(
+        10000, test_util.test_seed())
+    _, [simple_gx_, simple_gy_] = tfp.math.value_and_gradient(
+        simple_difference, [x, y])
+    _, [gx_, gy_] = tfp.math.value_and_gradient(
+        tfp_math.log_gamma_difference, [x, y])
+    simple_gx, simple_gy, gx, gy = self.evaluate(
+        [simple_gx_, simple_gy_, gx_, gy_])
+    self.assertAllClose(gx, simple_gx)
+    self.assertAllClose(gy, simple_gy)
+
+  def testLogGammaDifferenceGradientBroadcasting(self):
+    def simple_difference(x, y):
+      return tf.math.lgamma(y) - tf.math.lgamma(x + y)
+    x = tf.constant(1.)
+    y = tf.constant([[1., 2., 3.], [4., 5., 6.]])
+    _, [simple_gx_, simple_gy_] = tfp.math.value_and_gradient(
+        simple_difference, [x, y])
+    _, [gx_, gy_] = tfp.math.value_and_gradient(
+        tfp_math.log_gamma_difference, [x, y])
+    simple_gx, simple_gy, gx, gy = self.evaluate(
+        [simple_gx_, simple_gy_, gx_, gy_])
+    self.assertAllClose(gx, simple_gx)
+    self.assertAllClose(gy, simple_gy)
+
+  def testLogBeta(self):
+    strm = test_util.test_seed_stream()
+    x = tfp.distributions.HalfCauchy(loc=1., scale=15.).sample(10000, strm())
+    x = self.evaluate(x)
+    y = tfp.distributions.HalfCauchy(loc=1., scale=15.).sample(10000, strm())
+    y = self.evaluate(y)
+    # Why not 1e-8?
+    # - Could be because scipy does the reduction loops recommended
+    #   by DiDonato and Morris 1988
+    # - Could be that tf.math.lgamma is less accurate than scipy
+    # - Could be that scipy evaluates in 64 bits internally
+    rtol = 1e-5
+    self.assertAllClose(
+        scipy_special.betaln(x, y), tfp_math.lbeta(x, y),
+        atol=1e-7, rtol=rtol)
+
+  def testLogBetaGradient(self):
+    def simple_lbeta(x, y):
+      return tf.math.lgamma(x) + tf.math.lgamma(y) - tf.math.lgamma(x + y)
+    strm = test_util.test_seed_stream()
+    x = tfp.distributions.HalfCauchy(loc=1., scale=15.).sample(10000, strm())
+    y = tfp.distributions.HalfCauchy(loc=1., scale=15.).sample(10000, strm())
+    _, [simple_gx_, simple_gy_] = tfp.math.value_and_gradient(
+        simple_lbeta, [x, y])
+    _, [gx_, gy_] = tfp.math.value_and_gradient(tfp_math.lbeta, [x, y])
+    simple_gx, simple_gy, gx, gy = self.evaluate(
+        [simple_gx_, simple_gy_, gx_, gy_])
+    self.assertAllClose(gx, simple_gx)
+    self.assertAllClose(gy, simple_gy)
+
+  def testLogBetaGradientBroadcasting(self):
+    def simple_lbeta(x, y):
+      return tf.math.lgamma(x) + tf.math.lgamma(y) - tf.math.lgamma(x + y)
+    x = tf.constant(1.)
+    y = tf.constant([[1., 2., 3.], [4., 5., 6.]])
+    _, [simple_gx_, simple_gy_] = tfp.math.value_and_gradient(
+        simple_lbeta, [x, y])
+    _, [gx_, gy_] = tfp.math.value_and_gradient(tfp_math.lbeta, [x, y])
+    simple_gx, simple_gy, gx, gy = self.evaluate(
+        [simple_gx_, simple_gy_, gx_, gy_])
+    self.assertAllClose(gx, simple_gx)
+    self.assertAllClose(gy, simple_gy)
+
+  @parameterized.parameters(tf.float32, tf.float64)
+  def testLogBetaDtype(self, dtype):
+    x = tf.constant([1., 2.], dtype=dtype)
+    y = tf.constant([3., 4.], dtype=dtype)
+    result = tfp_math.lbeta(x, y)
+    self.assertEqual(result.dtype, dtype)
 
 if __name__ == "__main__":
   tf.test.main()
-

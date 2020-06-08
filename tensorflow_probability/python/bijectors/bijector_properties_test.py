@@ -46,6 +46,7 @@ TF2_FRIENDLY_BIJECTORS = (
     'Expm1',
     'FillScaleTriL',
     'FillTriangular',
+    'FrechetCDF',
     'GumbelCDF',
     'Identity',
     'Inline',
@@ -56,6 +57,7 @@ TF2_FRIENDLY_BIJECTORS = (
     'Log1p',
     'MatvecLU',
     'MatrixInverseTriL',
+    'MoyalCDF',
     'NormalCDF',
     'Ordered',
     'Permute',
@@ -70,6 +72,7 @@ TF2_FRIENDLY_BIJECTORS = (
     'Shift',
     'ScaleTriL',
     'Sigmoid',
+    'Sinh',
     'SinhArcsinh',
     'SoftClip',
     'Softfloor',
@@ -84,9 +87,11 @@ TF2_FRIENDLY_BIJECTORS = (
 
 BIJECTOR_PARAMS_NDIMS = {
     'AffineScalar': dict(shift=0, scale=0, log_scale=0),
+    'FrechetCDF': dict(loc=0, scale=0, concentration=0),
     'GumbelCDF': dict(loc=0, scale=0),
     'KumaraswamyCDF': dict(concentration1=0, concentration0=0),
     'MatvecLU': dict(lower_upper=2, permutation=1),
+    'MoyalCDF': dict(loc=0, scale=0),
     'Scale': dict(scale=0),
     'ScaleMatvecDiag': dict(scale_diag=1),
     'ScaleMatvecLU': dict(lower_upper=2, permutation=1),
@@ -111,7 +116,9 @@ INVERT_LDJ = {FLDJ: ILDJ, ILDJ: FLDJ}
 NO_LDJ_GRADS_EXPECTED = {
     'AffineScalar': dict(shift={FLDJ, ILDJ}),
     'BatchNormalization': dict(beta={FLDJ, ILDJ}),
+    'FrechetCDF': dict(loc={ILDJ}),
     'GumbelCDF': dict(loc={ILDJ}),
+    'MoyalCDF': dict(loc={ILDJ}),
     'Shift': dict(shift={FLDJ, ILDJ}),
 }
 
@@ -125,6 +132,7 @@ TRANSFORM_DIAGONAL_WHITELIST = {
     'Identity',
     'Inline',
     'KumaraswamyCDF',
+    'MoyalCDF',
     'NormalCDF',
     'PowerTransform',
     'Reciprocal',
@@ -134,6 +142,7 @@ TRANSFORM_DIAGONAL_WHITELIST = {
     'ScaleMatvecTriL',
     'Shift',
     'Sigmoid',
+    'Sinh',
     'SinhArcsinh',
     'Softplus',
     'Softsign',
@@ -149,10 +158,13 @@ AUTOVECTORIZATION_IS_BROKEN = [
 AUTOVECTORIZATION_RTOL = collections.defaultdict(lambda: 1e-5)
 AUTOVECTORIZATION_RTOL.update({
     'Invert': 1e-2,  # Can contain poorly-conditioned bijectors.
-    'ScaleMatvecTriL': 1e-3})
+    'MatvecLU': 1e-4,  # TODO(b/156638569) tighten this.
+    'ScaleMatvecLU': 1e-2,  # TODO(b/151041130) tighten this.
+    'ScaleMatvecTriL': 1e-3})  # TODO(b/150250388) tighten this.
 AUTOVECTORIZATION_ATOL = collections.defaultdict(lambda: 1e-5)
 AUTOVECTORIZATION_ATOL.update({
-    'ScaleMatvecTriL': 1e-1})  # TODO(b/150250388) loosen this.
+    'ScaleMatvecLU': 1e-2,  # TODO(b/151041130) tighten this.
+    'ScaleMatvecTriL': 1e-1})  # TODO(b/150250388) tighten this.
 
 
 def is_invert(bijector):
@@ -400,6 +412,8 @@ def domain_tensors(draw, bijector, shape=None):
   support = bijector_hps.bijector_supports()[bijector_name].forward
   if isinstance(bijector, tfb.PowerTransform):
     constraint_fn = bijector_hps.power_transform_constraint(bijector.power)
+  elif isinstance(bijector, tfb.FrechetCDF):
+    constraint_fn = bijector_hps.frechet_constraint(bijector.loc)
   else:
     constraint_fn = tfp_hps.constrainer(support)
   return draw(tfp_hps.constrained_tensors(constraint_fn, shape))
@@ -642,7 +656,8 @@ class BijectorPropertiesTest(test_util.TestCase):
     n = 3
     xs = self._draw_domain_tensor(bijector, data, event_dim, sample_shape=[n])
     ys = bijector.forward(xs)
-    vectorized_ys = tf.vectorized_map(bijector.forward, xs)
+    vectorized_ys = tf.vectorized_map(bijector.forward, xs,
+                                      fallback_to_while_loop=False)
     self.assertAllClose(*self.evaluate((ys, vectorized_ys)),
                         atol=atol, rtol=rtol)
 
@@ -653,7 +668,8 @@ class BijectorPropertiesTest(test_util.TestCase):
             max_value=prefer_static.rank_from_shape(xs.shape) - 1))
     fldj_fn = functools.partial(bijector.forward_log_det_jacobian,
                                 event_ndims=event_ndims)
-    vectorized_fldj = tf.vectorized_map(fldj_fn, xs)
+    vectorized_fldj = tf.vectorized_map(fldj_fn, xs,
+                                        fallback_to_while_loop=False)
     fldj = tf.broadcast_to(fldj_fn(xs), tf.shape(vectorized_fldj))
     self.assertAllClose(*self.evaluate((fldj, vectorized_fldj)),
                         atol=atol, rtol=rtol)
@@ -661,7 +677,8 @@ class BijectorPropertiesTest(test_util.TestCase):
     # Inverse
     ys = self._draw_codomain_tensor(bijector, data, event_dim, sample_shape=[n])
     xs = bijector.inverse(ys)
-    vectorized_xs = tf.vectorized_map(bijector.inverse, ys)
+    vectorized_xs = tf.vectorized_map(bijector.inverse, ys,
+                                      fallback_to_while_loop=False)
     self.assertAllClose(*self.evaluate((xs, vectorized_xs)),
                         atol=atol, rtol=rtol)
 
@@ -672,7 +689,8 @@ class BijectorPropertiesTest(test_util.TestCase):
             max_value=prefer_static.rank_from_shape(ys.shape) - 1))
     ildj_fn = functools.partial(bijector.inverse_log_det_jacobian,
                                 event_ndims=event_ndims)
-    vectorized_ildj = tf.vectorized_map(ildj_fn, ys)
+    vectorized_ildj = tf.vectorized_map(ildj_fn, ys,
+                                        fallback_to_while_loop=False)
     ildj = tf.broadcast_to(ildj_fn(ys), tf.shape(vectorized_ildj))
     self.assertAllClose(*self.evaluate((ildj, vectorized_ildj)),
                         atol=atol, rtol=rtol)
