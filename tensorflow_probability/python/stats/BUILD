@@ -34,6 +34,9 @@ exports_files(["LICENSE"])
 multi_substrate_py_library(
     name = "stats",
     srcs = ["__init__.py"],
+    jax_omit_deps = [
+        ":ranking",
+    ],
     srcs_version = "PY2AND3",
     deps = [
         ":calibration",
@@ -201,7 +204,6 @@ multi_substrate_py_test(
     name = "calibration_test",
     size = "large",
     srcs = ["calibration_test.py"],
-    jax_tags = ["notap"],
     numpy_tags = ["notap"],
     deps = [
         # absl/logging dep,

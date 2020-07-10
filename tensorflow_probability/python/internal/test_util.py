@@ -229,6 +229,14 @@ class TestCase(tf.test.TestCase, parameterized.TestCase):
     all_true = np.ones_like(is_negative_inf, dtype=np.bool)
     self.assertAllEqual(all_true, is_negative_inf)
 
+  def assertNotAllZero(self, a):
+    """Assert that all entries in a `Tensor` are nonzero.
+
+    Args:
+      a: A `Tensor` whose entries must be verified as nonzero.
+    """
+    self.assertNotAllEqual(a, tf.nest.map_structure(tf.zeros_like, a))
+
   def assertAllNan(self, a):
     """Assert that every entry in a `Tensor` is NaN.
 
@@ -398,13 +406,12 @@ def _tf_function_mode_context(tf_function_mode):
     raise ValueError(
         'Only allowable values for tf_function_mode_context are "" '
         'and "no_tf_function"; but got "{}"'.format(tf_function_mode))
-  original_mode = tf.config.experimental_functions_run_eagerly()
+  original_mode = tf.config.functions_run_eagerly()
   try:
-    tf.config.experimental_run_functions_eagerly(tf_function_mode ==
-                                                 'no_tf_function')
+    tf.config.run_functions_eagerly(tf_function_mode == 'no_tf_function')
     yield
   finally:
-    tf.config.experimental_run_functions_eagerly(original_mode)
+    tf.config.run_functions_eagerly(original_mode)
 
 
 class EagerGraphCombination(test_combinations.TestCombination):

@@ -69,7 +69,7 @@ MUTEX_PARAMS = (
 )
 
 
-# Whitelist of underlying distributions for QuantizedDistribution (must have
+# Allowlist of underlying distributions for QuantizedDistribution (must have
 # continuous, infinite support -- QuantizedDistribution also works for finite-
 # support distributions for which the length of the support along each dimension
 # is at least 1, though it is difficult to construct draws of these
@@ -124,6 +124,10 @@ def fix_lkj(d):
   return dict(d, concentration=d['concentration'] + 1, dimension=3)
 
 
+def fix_spherical_uniform(d):
+  return dict(d, dimension=5, batch_shape=[])
+
+
 def fix_pert(d):
   peak = ensure_high_gt_low(d['low'], d['peak'])
   high = ensure_high_gt_low(peak, d['high'])
@@ -176,6 +180,8 @@ CONSTRAINTS = {
         tfp_hps.softplus_plus_eps(),
     'JohnsonSU.tailweight':
         tfp_hps.softplus_plus_eps(),
+    'PowerSpherical.mean_direction':
+        lambda x: tf.math.l2_normalize(tf.math.sigmoid(x) + 1e-6, -1),
     'VonMisesFisher.mean_direction':  # max ndims is 3 to avoid instability.
         lambda x: tf.math.l2_normalize(tf.math.sigmoid(x[..., :3]) + 1e-6, -1),
     'Categorical.probs':
@@ -255,6 +261,8 @@ CONSTRAINTS = {
         lambda d: dict(d, high=ensure_high_gt_low(d['low'], d['high'])),
     'Uniform':
         lambda d: dict(d, high=ensure_high_gt_low(d['low'], d['high'])),
+    'SphericalUniform':
+        fix_spherical_uniform,
     'Wishart':
         fix_wishart,
     'WishartTriL':
@@ -300,7 +308,7 @@ def _instantiable_base_dists():
   - The class appears as a symbol binding in `tfp.distributions`;
   - The class defines a `_params_event_ndims` method (necessary
     to generate parameter Tensors with predictable batch shapes); and
-  - The name is not blacklisted in `SPECIAL_DISTS`.
+  - The name is not blocklisted in `SPECIAL_DISTS`.
 
   Additionally, the Empricial distribution is hardcoded with special
   instantiation rules for each choice of event_ndims among 0, 1, and 2.
@@ -482,13 +490,108 @@ def assert_shapes_unchanged(target_shaped_dict, possibly_bcast_dict):
 
 
 @hps.composite
+def base_distribution_unconstrained_params(draw,
+                                           dist_name,
+                                           batch_shape=None,
+                                           event_dim=None,
+                                           enable_vars=False,
+                                           params=None):
+  """Strategy for drawing unconstrained parameters of a base Distribution.
+
+  This does not draw parameters for compound distributions like `Independent`,
+  `MixtureSameFamily`, or `TransformedDistribution`; only base Distributions
+  that do not accept other Distributions as arguments.
+
+  Args:
+    draw: Hypothesis strategy sampler supplied by `@hps.composite`.
+    dist_name: Optional Python `str`.  If given, the produced distributions
+      will all have this type.
+    batch_shape: An optional `TensorShape`.  The batch shape of the resulting
+      Distribution.  Hypothesis will pick a batch shape if omitted.
+    event_dim: Optional Python int giving the size of each of the
+      distribution's parameters' event dimensions.  This is shared across all
+      parameters, permitting square event matrices, compatible location and
+      scale Tensors, etc. If omitted, Hypothesis will choose one.
+    enable_vars: TODO(bjp): Make this `True` all the time and put variable
+      initialization in slicing_test.  If `False`, the returned parameters are
+      all `tf.Tensor`s and not {`tf.Variable`, `tfp.util.DeferredTensor`
+      `tfp.util.TransformedVariable`}.
+    params: An optional set of Distribution parameters. If params are not
+      provided, Hypothesis will choose a set of parameters.
+
+  Returns:
+    dists: A strategy for drawing Distribution parameters with the specified
+    `batch_shape` (or an arbitrary one if omitted).
+  """
+  if params is not None:
+    assert batch_shape is not None, ('Need to pass in valid `batch_shape` when'
+                                     ' passing in `params`.')
+    return params, batch_shape
+  if batch_shape is None:
+    batch_shape = draw(tfp_hps.shapes())
+
+  # Draw raw parameters
+  params_kwargs = draw(
+      broadcasting_params(
+          dist_name, batch_shape, event_dim=event_dim, enable_vars=enable_vars))
+  hp.note('Forming dist {} with raw parameters {}'.format(
+      dist_name, params_kwargs))
+
+  return params_kwargs, batch_shape
+
+
+def constrain_params(params_unconstrained, dist_name):
+  """Constrains a parameters dictionary to a distribution's parameter space."""
+  # Constrain them to legal values
+  params_constrained = constraint_for(dist_name)(params_unconstrained)
+
+  # Sometimes the "distribution constraint" fn may replace c2t-tracking
+  # DeferredTensor params with Tensor params (e.g. fix_triangular). In such
+  # cases, we preserve the c2t-tracking DeferredTensors by wrapping them but
+  # ignoring the value.  We similarly reinstate raw tf.Variables, so they
+  # appear in the distribution's `variables` list and can be initialized.
+  for k in params_constrained:
+    # In JAX_MODE, tfp_util.DeferredTensor is a function, not a class, so we
+    # disable this check entirely.
+    if (not JAX_MODE and k in params_unconstrained and
+        isinstance(params_unconstrained[k],
+                   (tfp_util.DeferredTensor, tf.Variable))
+        and params_unconstrained[k] is not params_constrained[k]):
+
+      def constrained_value(v, val=params_constrained[k]):  # pylint: disable=cell-var-from-loop
+        # While the gradient to v will be 0, we only care about the c2t
+        # counts.
+        return v * 0 + val
+
+      params_constrained[k] = tfp_util.DeferredTensor(
+          params_unconstrained[k], constrained_value)
+  assert_shapes_unchanged(params_unconstrained, params_constrained)
+  hp.note('Forming dist {} with constrained parameters {}'.format(
+      dist_name, params_constrained))
+  return params_constrained
+
+
+def modify_params(params, dist_name, validate_args):
+  params = dict(params)
+  params['validate_args'] = validate_args
+
+  if dist_name in ['Wishart', 'WishartTriL']:
+    # With the default `input_output_cholesky = False`, Wishart occasionally
+    # produces samples for which the Cholesky decompositions fail, causing
+    # an error in testDistribution when `log_prob` is called on a sample.
+    params['input_output_cholesky'] = True
+  return params
+
+
+@hps.composite
 def base_distributions(draw,
                        dist_name=None,
                        batch_shape=None,
                        event_dim=None,
                        enable_vars=False,
                        eligibility_filter=lambda name: True,
-                       validate_args=True):
+                       validate_args=True,
+                       params=None):
   """Strategy for drawing arbitrary base Distributions.
 
   This does not draw compound distributions like `Independent`,
@@ -512,6 +615,8 @@ def base_distributions(draw,
     eligibility_filter: Optional Python callable.  Blacklists some Distribution
       class names so they will not be drawn at the top level.
     validate_args: Python `bool`; whether to enable runtime assertions.
+    params: An optional set of Distribution parameters. If params are not
+      provided, Hypothesis will choose a set of parameters.
 
   Returns:
     dists: A strategy for drawing Distributions with the specified `batch_shape`
@@ -526,52 +631,23 @@ def base_distributions(draw,
                 if eligibility_filter(k) and 'Empirical' in k]
     dist_name = draw(hps.sampled_from(sorted(variants)))
 
-  if batch_shape is None:
-    batch_shape = draw(tfp_hps.shapes())
+  if dist_name == 'SphericalUniform':
+    return draw(spherical_uniforms(
+        batch_shape=batch_shape, event_dim=event_dim,
+        validate_args=validate_args))
 
-  # Draw raw parameters
-  params_kwargs = draw(
-      broadcasting_params(
-          dist_name, batch_shape, event_dim=event_dim, enable_vars=enable_vars))
-  hp.note('Forming dist {} with raw parameters {}'.format(
-      dist_name, params_kwargs))
-
-  # Constrain them to legal values
-  params_constrained = constraint_for(dist_name)(params_kwargs)
-
-  # Sometimes the "distribution constraint" fn may replace c2t-tracking
-  # DeferredTensor params with Tensor params (e.g. fix_triangular). In such
-  # cases, we preserve the c2t-tracking DeferredTensors by wrapping them but
-  # ignoring the value.  We similarly reinstate raw tf.Variables, so they
-  # appear in the distribution's `variables` list and can be initialized.
-  for k in params_constrained:
-    # In JAX_MODE, tfp_util.DeferredTensor is a function, not a class, so we
-    # disable this check entirely.
-    if (not JAX_MODE and k in params_kwargs and
-        isinstance(params_kwargs[k], (tfp_util.DeferredTensor, tf.Variable)) and
-        params_kwargs[k] is not params_constrained[k]):
-
-      def constrained_value(v, val=params_constrained[k]):  # pylint: disable=cell-var-from-loop
-        # While the gradient to v will be 0, we only care about the c2t counts.
-        return v * 0 + val
-
-      params_constrained[k] = tfp_util.DeferredTensor(
-          params_kwargs[k], constrained_value)
-
-  hp.note('Forming dist {} with constrained parameters {}'.format(
-      dist_name, params_constrained))
-  assert_shapes_unchanged(params_kwargs, params_constrained)
-  params_constrained['validate_args'] = validate_args
-
-  if dist_name in ['Wishart', 'WishartTriL']:
-    # With the default `input_output_cholesky = False`, Wishart occasionally
-    # produces samples for which the Cholesky decompositions fail, causing
-    # an error in testDistribution when `log_prob` is called on a sample.
-    params_constrained['input_output_cholesky'] = True
-
+  if params is None:
+    params_unconstrained, batch_shape = draw(
+        base_distribution_unconstrained_params(dist_name,
+                                               batch_shape=batch_shape,
+                                               event_dim=event_dim,
+                                               enable_vars=enable_vars))
+    params = constrain_params(params_unconstrained, dist_name)
+  params = modify_params(
+      params, dist_name, validate_args=validate_args)
   # Actually construct the distribution
   dist_cls = INSTANTIABLE_BASE_DISTS[dist_name].cls
-  result_dist = dist_cls(**params_constrained)
+  result_dist = dist_cls(**params)
 
   # Check that the batch shape came out as expected
   if batch_shape != result_dist.batch_shape:
@@ -587,6 +663,35 @@ def depths():
 
 def params_used(dist):
   return [k for k, v in six.iteritems(dist.parameters) if v is not None]
+
+
+@hps.composite
+def spherical_uniforms(
+    draw, batch_shape=None, event_dim=None, validate_args=True):
+  """Strategy for drawing `SphericalUniform` distributions.
+
+  The underlying distribution is drawn from the `distributions` strategy.
+
+  Args:
+    draw: Hypothesis strategy sampler supplied by `@hps.composite`.
+    batch_shape: An optional `TensorShape`.  The batch shape of the resulting
+      `SphericalUniform` distribution.
+    event_dim: Optional Python int giving the size of the
+      distribution's event dimension.
+    validate_args: Python `bool`; whether to enable runtime assertions.
+
+  Returns:
+    dists: A strategy for drawing `UniformSphere` distributions with the
+      specified `batch_shape` (or an arbitrary one if omitted).
+  """
+  if batch_shape is None:
+    batch_shape = draw(tfp_hps.shapes(min_ndims=0, max_side=4))
+  if event_dim is None:
+    event_dim = draw(hps.integers(min_value=1, max_value=10))
+
+  result_dist = tfd.SphericalUniform(
+      dimension=event_dim, batch_shape=batch_shape, validate_args=validate_args)
+  return result_dist
 
 
 @hps.composite
@@ -613,7 +718,7 @@ def batch_reshapes(
       all `tf.Tensor`s and not {`tf.Variable`, `tfp.util.DeferredTensor`
       `tfp.util.TransformedVariable`}
     depth: Python `int` giving maximum nesting depth of compound Distributions.
-    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+    eligibility_filter: Optional Python callable.  Blocks some Distribution
       class names so they will not be drawn.
     validate_args: Python `bool`; whether to enable runtime assertions.
 
@@ -675,7 +780,7 @@ def independents(
       all `tf.Tensor`s and not {`tf.Variable`, `tfp.util.DeferredTensor`
       `tfp.util.TransformedVariable`}
     depth: Python `int` giving maximum nesting depth of compound Distributions.
-    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+    eligibility_filter: Optional Python callable.  Blocks some Distribution
       class names so they will not be drawn.
     validate_args: Python `bool`; whether to enable runtime assertions.
 
@@ -754,7 +859,7 @@ def transformed_distributions(draw,
       all `tf.Tensor`s and not {`tf.Variable`, `tfp.util.DeferredTensor`
       `tfp.util.TransformedVariable`}
     depth: Python `int` giving maximum nesting depth of compound Distributions.
-    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+    eligibility_filter: Optional Python callable.  Blocks some Distribution
       class names so they will not be drawn.
     validate_args: Python `bool`; whether to enable runtime assertions.
 
@@ -769,16 +874,8 @@ def transformed_distributions(draw,
   hp.note('Drawing TransformedDistribution with bijector {}'.format(bijector))
   if batch_shape is None:
     batch_shape = draw(tfp_hps.shapes())
-  underlying_batch_shape = batch_shape
-  # TODO(b/151180729): Remove `batch_shape_arg` when `TransformedDistribution`
-  # shape overrides are deprecated.
-  batch_shape_arg = None
-  if draw(hps.booleans()):
-    # Use batch_shape overrides.
-    underlying_batch_shape = tf.TensorShape([])  # scalar underlying batch
-    batch_shape_arg = batch_shape
   underlyings = distributions(
-      batch_shape=underlying_batch_shape,
+      batch_shape=batch_shape,
       event_dim=event_dim,
       enable_vars=enable_vars,
       depth=depth - 1,
@@ -792,7 +889,6 @@ def transformed_distributions(draw,
   result_dist = tfd.TransformedDistribution(
       bijector=bijector,
       distribution=to_transform,
-      batch_shape=batch_shape_arg,
       validate_args=validate_args)
   if batch_shape != result_dist.batch_shape:
     msg = ('TransformedDistribution strategy generated a bad batch shape '
@@ -823,7 +919,7 @@ def quantized_distributions(draw,
     enable_vars: TODO(bjp): Make this `True` all the time and put variable
       initialization in slicing_test.  If `False`, the returned parameters are
       all Tensors, never Variables or DeferredTensor.
-    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+    eligibility_filter: Optional Python callable.  Blocks some Distribution
       class names so they will not be drawn.
     validate_args: Python `bool`; whether to enable runtime assertions.
 
@@ -932,7 +1028,7 @@ def mixtures_same_family(draw,
       all `tf.Tensor`s and not {`tf.Variable`, `tfp.util.DeferredTensor`
       `tfp.util.TransformedVariable`}
     depth: Python `int` giving maximum nesting depth of compound Distributions.
-    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+    eligibility_filter: Optional Python callable.  Blocks some Distribution
       class names so they will not be drawn.
     validate_args: Python `bool`; whether to enable runtime assertions.
 
@@ -1010,7 +1106,7 @@ def mixtures(draw,
       all `tf.Tensor`s and not {`tf.Variable`, `tfp.util.DeferredTensor`
       `tfp.util.TransformedVariable`}
     depth: Python `int` giving maximum nesting depth of compound Distributions.
-    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+    eligibility_filter: Optional Python callable.  Blocks some Distribution
       class names so they will not be drawn.
     validate_args: Python `bool`; whether to enable runtime assertions.
 
@@ -1090,7 +1186,7 @@ def distributions(draw,
     depth: Python `int` giving maximum nesting depth of compound Distributions.
       If `None`, Hypothesis will bias choose one, with a bias towards shallow
       nests.
-    eligibility_filter: Optional Python callable.  Blacklists some Distribution
+    eligibility_filter: Optional Python callable.  Blocks some Distribution
       class names so they will not be drawn.
     validate_args: Python `bool`; whether to enable runtime assertions.
 

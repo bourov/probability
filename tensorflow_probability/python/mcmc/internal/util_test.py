@@ -33,6 +33,10 @@ from tensorflow_probability.python.internal import test_util
 from tensorflow_probability.python.mcmc.internal import util
 
 
+JAX_MODE = False
+NUMPY_MODE = False
+
+
 @test_util.test_all_tf_execution_regimes
 class ChooseTest(test_util.TestCase):
 
@@ -92,6 +96,33 @@ class ChooseTest(test_util.TestCase):
     expected = [expected_array]
     self.assertAllEqual(expected, chosen_)
 
+  @test_util.jax_disable_test_missing_functionality('no tf.TensorSpec')
+  @test_util.numpy_disable_test_missing_functionality('no tf.TensorSpec')
+  def test_conserves_partial_shapes(self):
+    # Testing that `choose` correctly propagates shape information about the
+    # arms, even when those shapes are partial and when the shape of the
+    # condition is partial as well.
+    input_signature = [tf.TensorSpec([], tf.int32)]
+    @tf.function(input_signature=input_signature)
+    def try_me(batch_size):
+      # The while loop is necessary for this test, because it affects TF's shape
+      # inference behavior somehow (maybe another appearance of b/139013403?).
+      init = tf.zeros([batch_size, 1])
+      def body_fn(state):
+        arm_1 = state
+        arm_2 = tf.ones([batch_size, 1])
+        condition = tf.ones([batch_size], dtype=tf.bool)
+        result = util.choose(condition, arm_1, arm_2)
+        # The test is the automatic check inside `tf.while_loop` that the static
+        # shape returned here is the same as the static shape of the input
+        # `state`.
+        return result
+      tf.while_loop(
+          cond=lambda *_: False,
+          body=body_fn,
+          loop_vars=(init,))
+    try_me(5)
+
 
 class IsNamedTupleLikeTest(test_util.TestCase):
 
@@ -115,6 +146,7 @@ class IsNamedTupleLikeTest(test_util.TestCase):
 
 class GradientTest(test_util.TestCase):
 
+  @test_util.numpy_disable_gradient_test
   def testGradientComputesCorrectly(self):
     dtype = np.float32
     def fn(x, y):
@@ -129,6 +161,7 @@ class GradientTest(test_util.TestCase):
     for grad in grads_:
       self.assertAllClose(grad, dtype(6), atol=0., rtol=1e-5)
 
+  @test_util.numpy_disable_gradient_test
   def testGradientWorksDespiteBijectorCaching(self):
     x = tf.constant(2.)
     fn_result, grads = util.maybe_call_fn_and_grads(
@@ -136,6 +169,8 @@ class GradientTest(test_util.TestCase):
     self.assertAllEqual(False, fn_result is None)
     self.assertAllEqual([False], [g is None for g in grads])
 
+  @test_util.jax_disable_test_missing_functionality('None gradients')
+  @test_util.numpy_disable_gradient_test
   def testNoGradientsNiceError(self):
     dtype = np.float32
 
@@ -175,7 +210,8 @@ class SmartForLoopTest(test_util.TestCase):
 
       result = util.smart_for_loop(
           loop_num_iter=n, body_fn=body, initial_loop_vars=[tf.constant(1)])
-      self.assertEqual(10, counter['body_calls'])
+      expected_calls = 1 if JAX_MODE else 10  # JAX always traces loops
+      self.assertEqual(expected_calls, counter['body_calls'])
       self.assertAllClose([11], self.evaluate(result))
 
   def test_tf_while_loop(self):
@@ -188,8 +224,10 @@ class SmartForLoopTest(test_util.TestCase):
 
     result = util.smart_for_loop(
         loop_num_iter=n, body_fn=body, initial_loop_vars=[tf.constant(1)])
-    self.assertEqual(iters if tf.executing_eagerly() else 1,
-                     counter['body_calls'])
+    if tf.executing_eagerly() and not JAX_MODE:  # JAX always traces loops
+      self.assertEqual(iters, counter['body_calls'])
+    else:
+      self.assertEqual(1, counter['body_calls'])
     self.assertAllClose([11], self.evaluate(result))
 
 
@@ -495,6 +533,8 @@ class SimpleTensorWarningTest(test_util.TestCase):
   @parameterized.parameters([lambda: tf.Variable(0)],
                             [lambda: tf.Variable(0)],
                             [lambda: TensorConvertible()])
+  @test_util.disable_test_for_backend(disable_numpy=True, disable_jax=True,
+                                      reason='Variable/DeferredTensor')
   def testWarn(self, tensor_callable):
     tensor = tensor_callable()
     warnings.simplefilter('always')

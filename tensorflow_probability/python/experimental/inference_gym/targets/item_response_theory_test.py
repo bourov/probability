@@ -80,6 +80,35 @@ class ItemResponseTheoryTest(test_util.InferenceGymTestCase,
     with self.assertRaisesRegex(ValueError, 'all be specified'):
       item_response_theory.ItemResponseTheory(**dataset)
 
+  @tfp_test_util.numpy_disable_test_missing_functionality(
+      'tf.gather_nd and batch_dims > 0')
+  @parameterized.named_parameters(
+      ('NoTest', None),
+      ('WithTest', 5),
+  )
+  def testCreateDataset(self, num_test_points):
+    """Checks that creating a dataset works."""
+    # Technically this is private functionality, but we don't have it tested
+    # elsewhere.
+    if not tf.executing_eagerly():
+      self.skipTest('This is Eager only for now due to _sample_dataset being '
+                    'Eager-only.')
+    model = item_response_theory.ItemResponseTheory(
+        **_test_dataset(num_test_points))
+    model2 = item_response_theory.ItemResponseTheory(
+        **model._sample_dataset(tfp_test_util.test_seed()))
+    self.validate_log_prob_and_transforms(
+        model2,
+        sample_transformation_shapes=dict(
+            identity={
+                'mean_student_ability': [],
+                'student_ability': [20],
+                'question_difficulty': [10],
+            },
+            test_nll=[],
+            per_example_test_nll=[num_test_points],
+        ))
+
   def testSyntheticItemResponseTheory(self):
     """Checks that you get finite values given unconstrained samples.
 
@@ -101,11 +130,8 @@ class ItemResponseTheoryTest(test_util.InferenceGymTestCase,
     )
 
   @tfp_test_util.numpy_disable_gradient_test
-  @tfp_test_util.jax_disable_test_missing_functionality('tfp.mcmc')
   def testSyntheticItemResponseTheoryHMC(self):
     """Checks approximate samples from the model against the ground truth."""
-    # Note the side-effect of setting the eager seed.
-    seed = tfp_test_util.test_seed_stream()
     model = item_response_theory.SyntheticItemResponseTheory()
 
     self.validate_ground_truth_using_hmc(
@@ -114,7 +140,6 @@ class ItemResponseTheoryTest(test_util.InferenceGymTestCase,
         num_steps=5000,
         num_leapfrog_steps=10,
         step_size=0.025,
-        seed=seed(),
     )
 
 

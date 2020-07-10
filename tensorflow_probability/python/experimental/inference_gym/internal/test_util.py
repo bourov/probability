@@ -19,6 +19,7 @@ from __future__ import division
 from __future__ import print_function
 
 import collections
+import os
 
 from absl import flags
 from absl import logging
@@ -76,7 +77,7 @@ def run_hmc_on_model(
     target_accept_prob=0.9,
     seed=None,
     dtype=tf.float32,
-    use_xla=False,
+    use_xla=True,
 ):
   """Runs HMC on a target.
 
@@ -103,10 +104,6 @@ def run_hmc_on_model(
 
   if seed is None:
     seed = test_util.test_seed()
-  if tf.executing_eagerly():
-    # TODO(b/141368747): HMC doesn't like you passing the seed in when in
-    # eager mode.
-    seed = None
   current_state = tf.nest.map_structure(
       lambda b, e: b(  # pylint: disable=g-long-lambda
           tf.zeros([num_chains] + list(e), dtype=dtype)),
@@ -119,8 +116,7 @@ def run_hmc_on_model(
   hmc = tfp.mcmc.HamiltonianMonteCarlo(
       target_log_prob_fn=target_log_prob_fn,
       num_leapfrog_steps=num_leapfrog_steps,
-      step_size=[tf.fill(s.shape, step_size) for s in current_state],
-      seed=seed)
+      step_size=[tf.fill(s.shape, step_size) for s in current_state])
   hmc = tfp.mcmc.TransformedTransitionKernel(
       hmc, tf.nest.flatten(model.default_event_space_bijector))
   hmc = tfp.mcmc.DualAveragingStepSizeAdaptation(
@@ -128,16 +124,19 @@ def run_hmc_on_model(
       num_adaptation_steps=int(num_steps // 2 * 0.8),
       target_accept_prob=target_accept_prob)
 
+  # Subtle: Under JAX, there needs to be a data dependency on the input for
+  # jitting to work.
   chain, is_accepted = tf.function(
-      lambda: tfp.mcmc.sample_chain(  # pylint: disable=g-long-lambda
+      lambda current_state: tfp.mcmc.sample_chain(  # pylint: disable=g-long-lambda
           current_state=current_state,
           kernel=hmc,
           num_results=num_steps // 2,
           num_burnin_steps=num_steps // 2,
           trace_fn=lambda _, pkr:  # pylint: disable=g-long-lambda
-          (pkr.inner_results.inner_results.is_accepted)),
+          (pkr.inner_results.inner_results.is_accepted),
+          seed=seed),
       autograph=False,
-      experimental_compile=use_xla)()
+      experimental_compile=use_xla)(current_state)
 
   accept_rate = tf.reduce_mean(tf.cast(is_accepted, dtype))
   ess = tf.nest.map_structure(
@@ -159,6 +158,11 @@ def run_hmc_on_model(
 
 class InferenceGymTestCase(test_util.TestCase):
   """A TestCase mixin for common tests on inference gym targets."""
+
+  def setUp(self):
+    # We want to test with 64 bit precision sometimes.
+    os.environ['JAX_ENABLE_X64'] = 'True'
+    super(InferenceGymTestCase, self).setUp()
 
   def validate_log_prob_and_transforms(
       self,
@@ -278,6 +282,7 @@ class InferenceGymTestCase(test_util.TestCase):
       target_accept_prob=0.9,
       seed=None,
       dtype=tf.float32,
+      use_xla=True,
   ):
     """Validates the ground truth of a model using HMC.
 
@@ -291,6 +296,7 @@ class InferenceGymTestCase(test_util.TestCase):
       target_accept_prob: Target acceptance probability.
       seed: Optional seed to use. By default, `test_util.test_seed()` is used.
       dtype: DType to use for the algorithm.
+      use_xla: Whether to use XLA.
     """
     mcmc_results = self.evaluate(
         run_hmc_on_model(
@@ -301,7 +307,8 @@ class InferenceGymTestCase(test_util.TestCase):
             step_size=step_size,
             target_accept_prob=target_accept_prob,
             seed=seed,
-            dtype=dtype))
+            dtype=dtype,
+            use_xla=use_xla))
 
     logging.info('Acceptance rate: %s', mcmc_results.accept_rate)
     logging.info('ESS: %s', mcmc_results.ess)

@@ -65,6 +65,8 @@ multi_substrate_py_library(
         ":fill_triangular",
         ":frechet_cdf",
         ":generalized_pareto",
+        ":gev_cdf",
+        ":gompertz_cdf",
         ":gumbel_cdf",
         ":identity",
         ":inline",
@@ -90,6 +92,7 @@ multi_substrate_py_library(
         ":scale_matvec_lu",
         ":scale_matvec_tril",
         ":shift",
+        ":shifted_gompertz_cdf",
         ":sigmoid",
         ":sinh",
         ":sinh_arcsinh",
@@ -128,6 +131,7 @@ multi_substrate_py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "bijector_properties_test",
     size = "large",
@@ -219,6 +223,19 @@ multi_substrate_py_library(
 )
 
 multi_substrate_py_library(
+    name = "shifted_gompertz_cdf",
+    srcs = ["shifted_gompertz_cdf.py"],
+    deps = [
+        ":bijector",
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:assert_util",
+        "//tensorflow_probability/python/internal:dtype_util",
+        "//tensorflow_probability/python/internal:tensor_util",
+        "//tensorflow_probability/python/math",
+    ],
+)
+
+multi_substrate_py_library(
     name = "scale_matvec_linear_operator",
     srcs = ["scale_matvec_linear_operator.py"],
     deps = [
@@ -267,6 +284,7 @@ multi_substrate_py_library(
         ":bijector",
         # tensorflow dep,
         "//tensorflow_probability/python/internal:assert_util",
+        "//tensorflow_probability/python/internal:prefer_static",
         "//tensorflow_probability/python/internal:tensorshape_util",
     ],
 )
@@ -432,6 +450,30 @@ multi_substrate_py_library(
 multi_substrate_py_library(
     name = "gumbel_cdf",
     srcs = ["gumbel_cdf.py"],
+    deps = [
+        ":bijector",
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:assert_util",
+        "//tensorflow_probability/python/internal:dtype_util",
+        "//tensorflow_probability/python/internal:tensor_util",
+    ],
+)
+
+multi_substrate_py_library(
+    name = "gev_cdf",
+    srcs = ["gev_cdf.py"],
+    deps = [
+        ":bijector",
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:assert_util",
+        "//tensorflow_probability/python/internal:dtype_util",
+        "//tensorflow_probability/python/internal:tensor_util",
+    ],
+)
+
+multi_substrate_py_library(
+    name = "gompertz_cdf",
+    srcs = ["gompertz_cdf.py"],
     deps = [
         ":bijector",
         # tensorflow dep,
@@ -996,6 +1038,20 @@ multi_substrate_py_test(
 )
 
 multi_substrate_py_test(
+    name = "shifted_gompertz_cdf_test",
+    size = "small",
+    srcs = ["shifted_gompertz_cdf_test.py"],
+    deps = [
+        ":bijector_test_util",
+        ":bijectors",
+        # numpy dep,
+        # scipy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
+multi_substrate_py_test(
     name = "scale_matvec_diag_test",
     size = "small",
     srcs = ["scale_matvec_diag_test.py"],
@@ -1073,6 +1129,7 @@ multi_substrate_py_test(
         ":categorical_to_discrete",
         # numpy dep,
         # tensorflow dep,
+        "//tensorflow_probability",
         "//tensorflow_probability/python/internal:test_util",
     ],
 )
@@ -1249,9 +1306,37 @@ multi_substrate_py_test(
 )
 
 multi_substrate_py_test(
+    name = "gompertz_cdf_test",
+    size = "small",
+    srcs = ["gompertz_cdf_test.py"],
+    deps = [
+        ":bijector_test_util",
+        ":bijectors",
+        # numpy dep,
+        # scipy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
+multi_substrate_py_test(
     name = "gumbel_cdf_test",
     size = "small",
     srcs = ["gumbel_cdf_test.py"],
+    deps = [
+        ":bijector_test_util",
+        ":bijectors",
+        # numpy dep,
+        # scipy dep,
+        # tensorflow dep,
+        "//tensorflow_probability/python/internal:test_util",
+    ],
+)
+
+multi_substrate_py_test(
+    name = "gev_cdf_test",
+    size = "small",
+    srcs = ["gev_cdf_test.py"],
     deps = [
         ":bijector_test_util",
         ":bijectors",
@@ -1335,6 +1420,7 @@ multi_substrate_py_test(
     size = "small",
     timeout = "moderate",
     srcs = ["masked_autoregressive_test.py"],
+    jax_tags = ["omni_fail"],
     deps = [
         ":bijectors",
         ":masked_autoregressive",
@@ -1376,6 +1462,7 @@ multi_substrate_py_test(
     ],
 )
 
+# py2and3
 py_test(
     name = "scale_matvec_lu_test",
     size = "small",
@@ -1456,6 +1543,7 @@ multi_substrate_py_test(
     ],
 )
 
+# py2and3
 py_test(
     name = "real_nvp_test",
     size = "small",
@@ -1475,7 +1563,6 @@ multi_substrate_py_test(
     name = "rational_quadratic_spline_test",
     size = "medium",
     srcs = ["rational_quadratic_spline_test.py"],
-    jax_tags = ["notap"],
     numpy_tags = ["notap"],
     tags = ["hypothesis"],
     deps = [
@@ -1782,9 +1869,11 @@ exports_files(
         "fill_triangular_test.py",
         "generalized_pareto.py",
         "generalized_pareto_test.py",
+        "gompertz_cdf.py",
         "gumbel.py",
         "gumbel_cdf.py",
         "gumbel_cdf_test.py",
+        "gev_cdf.py",
         "hypothesis_testlib.py",
         "identity.py",
         "identity_test.py",
@@ -1824,6 +1913,7 @@ exports_files(
         "scale_matvec_linear_operator.py",
         "scale_matvec_tril.py",
         "shift.py",
+        "shifted_gompertz_cdf.py",
         "sigmoid.py",
         "sigmoid_test.py",
         "sinh.py",

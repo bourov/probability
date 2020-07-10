@@ -71,6 +71,7 @@ TF2_FRIENDLY_DISTS = (
     'Kumaraswamy',
     'Laplace',
     'LKJ',
+    'LogLogistic',
     'LogNormal',
     'Logistic',
     'Normal',
@@ -83,18 +84,21 @@ TF2_FRIENDLY_DISTS = (
     'PERT',
     'PlackettLuce',
     'Poisson',
+    'PowerSpherical',
     # 'PoissonLogNormalQuadratureCompound' TODO(b/137956955): Add support
     # for hypothesis testing
     'ProbitBernoulli',
     'RelaxedBernoulli',
     'ExpRelaxedOneHotCategorical',
     # 'SinhArcsinh' TODO(b/137956955): Add support for hypothesis testing
+    'SphericalUniform',
     'StudentT',
     'Triangular',
     'TruncatedNormal',
     'Uniform',
     'VonMises',
     'VonMisesFisher',
+    'Weibull',
     'WishartTriL',
     'Zipf',
 )
@@ -123,7 +127,7 @@ EXTRA_TENSOR_CONVERSION_DISTS = {
 
 # TODO(b/130815467) All distributions should be auto-vectorizeable.
 # The lists below contain distributions from INSTANTIABLE_BASE_DISTS that are
-# blacklisted by the autovectorization tests. Since not all distributions are
+# blocked for the autovectorization tests. Since not all distributions are
 # in INSTANTIABLE_BASE_DISTS, these should not be taken as exhaustive.
 SAMPLE_AUTOVECTORIZATION_IS_BROKEN = [
     'Bates',  # tf.repeat and tf.range do not vectorize. (b/157665707)
@@ -287,7 +291,7 @@ class DistributionParamsAreVarsTest(test_util.TestCase):
       pass
 
     # Test that log_prob produces non-None gradients, except for distributions
-    # on the NO_LOG_PROB_PARAM_GRADS blacklist.
+    # on the NO_LOG_PROB_PARAM_GRADS blocklist.
     if dist_name not in NO_LOG_PROB_PARAM_GRADS:
       with tf.GradientTape() as tape:
         lp = dist.log_prob(tf.stop_gradient(sample))

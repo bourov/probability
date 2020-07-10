@@ -23,6 +23,7 @@ import sys
 
 # Dependency imports
 
+import numpy as np
 import tensorflow.compat.v2 as tf
 
 from tensorflow_probability.python import math as tfp_math
@@ -43,9 +44,17 @@ __all__ = [
 
 BATES_TOTAL_COUNT_STABILITY_LIMITS = {
     tf.float64: 75.,
+    np.float64: 75.,
+    np.finfo(np.float64).dtype: 75.,
+
     tf.float32: 25.,
+    np.float32: 25.,
+    np.finfo(np.float32).dtype: 25.,
+
     # Not an allowed type but we keep this here for the record.
     tf.float16: 7.,
+    np.float16: 7.,
+    np.finfo(np.float16).dtype: 7.,
 }
 
 
@@ -332,6 +341,7 @@ def _bates_pdf(total_count, low, high, dtype, value):
     value_centered = (value - low) / range_
     value_adj = tf.clip_by_value(value_centered, 0., 1.)
     value_adj = tf.where(value_adj < .5, value_adj, 1. - value_adj)
+    value_adj = tf.where(tf.math.is_finite(value_adj), value_adj, low)
     # Flatten to make segments; need to broadcast before flattening.
     shape = ps.broadcast_shape(ps.shape(value_adj), ps.shape(total_count))
     total_count_b = ps.broadcast_to(total_count, shape)
@@ -361,6 +371,7 @@ def _bates_pdf(total_count, low, high, dtype, value):
     # Fix out-of-support queries.
     pdf = tf.where((value_centered < 0.) | (value_centered > 1.),
                    tf.cast(0., dtype), pdf)
+    pdf = tf.where(tf.math.is_finite(value_centered), pdf, np.nan)
     return pdf
 
 
@@ -412,6 +423,7 @@ def _bates_cdf(total_count, low, high, dtype, value):
     value_centered = (value - low) / (high - low)
     value_adj = tf.clip_by_value(value_centered, 0., 1.)
     value_adj = tf.where(value_adj < .5, value_adj, 1. - value_adj)
+    value_adj = tf.where(tf.math.is_finite(value_adj), value_adj, low)
     # Flatten to make segments; need to broadcast before flattening.
     shape = ps.broadcast_shape(ps.shape(value_adj), ps.shape(total_count))
     total_count_b = ps.broadcast_to(total_count, shape)
@@ -442,6 +454,7 @@ def _bates_cdf(total_count, low, high, dtype, value):
     # Fix out-of-support queries.
     cdf = tf.where(value_centered < 0., tf.cast(0., dtype), cdf)
     cdf = tf.where(value_centered > 1., tf.cast(1., dtype), cdf)
+    cdf = tf.where(tf.math.is_finite(value_centered), cdf, np.nan)
     return cdf
 
 

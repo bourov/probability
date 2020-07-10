@@ -75,15 +75,12 @@ TF_REPLACEMENTS = {
 }
 
 DISABLED_BY_PKG = {
-    'mcmc':
-        ('nuts', 'sample_annealed_importance', 'sample_halton_sequence',
-         'slice_sampler_kernel'),
     'experimental':
         ('auto_batching', 'composite_tensor', 'edward2', 'linalg',
          'marginalize', 'mcmc', 'nn', 'sequential', 'substrates', 'vi'),
 }
 LIBS = ('bijectors', 'distributions', 'experimental', 'math', 'mcmc',
-        'optimizer', 'stats', 'util')
+        'optimizer', 'random', 'stats', 'util')
 INTERNALS = (
     'assert_util',
     'batched_rejection_sampler',
@@ -92,6 +89,7 @@ INTERNALS = (
     'dtype_util',
     'hypothesis_testlib',
     'implementation_selection',
+    'monte_carlo',
     'name_util',
     'nest_util',
     'prefer_static',
@@ -100,7 +98,8 @@ INTERNALS = (
     'tensor_util',
     'tensorshape_util',
     'test_combinations',
-    'test_util'
+    'test_util',
+    'vectorization_util'
 )
 OPTIMIZERS = ('linesearch',)
 LINESEARCH = ('internal',)
@@ -271,6 +270,13 @@ def main(argv):
 
   for find, replace in replacements.items():
     contents = contents.replace(find, replace)
+
+  disabler = 'JAX_DISABLE' if FLAGS.numpy_to_jax else 'NUMPY_DISABLE'
+  lines = contents.split('\n')
+  for i, l in enumerate(lines):
+    if disabler in l:
+      lines[i] = '# {}'.format(l)
+  contents = '\n'.join(lines)
 
   if not FLAGS.numpy_to_jax:
     contents = contents.replace('NUMPY_MODE = False', 'NUMPY_MODE = True')

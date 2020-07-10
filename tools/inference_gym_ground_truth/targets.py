@@ -20,12 +20,16 @@ from __future__ import division
 from __future__ import print_function
 
 from tools.inference_gym_ground_truth import item_response_theory
+from tools.inference_gym_ground_truth import log_gaussian_cox_process
 from tools.inference_gym_ground_truth import logistic_regression
+from tools.inference_gym_ground_truth import sparse_logistic_regression
 from tensorflow_probability.python.experimental.inference_gym.internal import data
 
 __all__ = [
     'german_credit_numeric_logistic_regression',
+    'german_credit_numeric_sparse_logistic_regression',
     'synthetic_item_response_theory',
+    'synthetic_log_gaussian_cox_process',
 ]
 
 
@@ -39,6 +43,18 @@ def german_credit_numeric_logistic_regression():
   del dataset['test_features']
   del dataset['test_labels']
   return logistic_regression.logistic_regression(**dataset)
+
+
+def german_credit_numeric_sparse_logistic_regression():
+  """German credit (numeric) logistic regression with a sparsity-inducing prior.
+
+  Returns:
+    target: StanModel.
+  """
+  dataset = data.german_credit_numeric()
+  del dataset['test_features']
+  del dataset['test_labels']
+  return sparse_logistic_regression.sparse_logistic_regression(**dataset)
 
 
 def synthetic_item_response_theory():
@@ -56,3 +72,17 @@ def synthetic_item_response_theory():
   del dataset['test_question_ids']
   del dataset['test_correct']
   return item_response_theory.item_response_theory(**dataset)
+
+
+def synthetic_log_gaussian_cox_process():
+  """Log-Gaussian Cox Process model.
+
+  This dataset was simulated by constructing a 10 by 10 grid of equidistant 2D
+  locations with spacing = 1, and then sampling from the prior to determine the
+  counts at those locations.
+
+  Returns:
+    target: StanModel.
+  """
+  dataset = data.synthetic_log_gaussian_cox_process()
+  return log_gaussian_cox_process.log_gaussian_cox_process(**dataset)

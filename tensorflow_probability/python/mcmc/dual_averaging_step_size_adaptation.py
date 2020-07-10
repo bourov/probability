@@ -24,6 +24,7 @@ import functools
 import numpy as np
 import tensorflow.compat.v2 as tf
 
+from tensorflow_probability.python.internal import assert_util
 from tensorflow_probability.python.internal import dtype_util
 from tensorflow_probability.python.internal import prefer_static
 from tensorflow_probability.python.math.generic import reduce_logmeanexp
@@ -36,6 +37,7 @@ from tensorflow_probability.python.mcmc.simple_step_size_adaptation import hmc_l
 
 
 class DualAveragingStepSizeAdaptationResults(
+    mcmc_util.PrettyNamedTupleMixin,
     collections.namedtuple(
         'DualAveragingStepSizeAdaptationResults',
         'inner_results, target_accept_prob, log_shrinkage_target, '
@@ -212,9 +214,9 @@ class DualAveragingStepSizeAdaptation(kernel_base.TransitionKernel):
           (the [center of asymptotically optimal rate for HMC][1]).
       exploration_shrinkage: Floating point scalar `Tensor`. How strongly the
         exploration rate is biased towards the shrinkage target.
-      shrinkage_target: Floating point scalar `Tensor`. Value the exploration
-        step size is biased towards.  As `num_adaptation_steps --> infinity`,
-        this bias goes to zero.
+      shrinkage_target: `Tensor` or list of tensors. Value the exploration
+        step size(s) is/are biased towards.
+        As `num_adaptation_steps --> infinity`, this bias goes to zero.
         Defaults to 10 times the initial step size.
       step_count_smoothing: Int32 scalar `Tensor`. Number of "pseudo-steps"
         added to the number of steps taken to prevents noisy exploration during
@@ -273,8 +275,9 @@ class DualAveragingStepSizeAdaptation(kernel_base.TransitionKernel):
           target_accept_prob, validate_args)
 
       if shrinkage_target is not None:
-        shrinkage_target = tf.convert_to_tensor(
-            shrinkage_target, dtype=dtype, name='shrinkage_target')
+        def _convert(x):
+          return tf.convert_to_tensor(x, dtype=dtype, name='shrinkage_target')
+        shrinkage_target = tf.nest.map_structure(_convert, shrinkage_target)
 
     self._parameters = dict(
         inner_kernel=inner_kernel,
@@ -438,7 +441,7 @@ class DualAveragingStepSizeAdaptation(kernel_base.TransitionKernel):
         new_log_averaging_step)
     return new_step_size, new_log_averaging_step, new_error_sum
 
-  def one_step(self, current_state, previous_kernel_results):
+  def one_step(self, current_state, previous_kernel_results, seed=None):
     with tf.name_scope(
         mcmc_util.make_name(self.name, 'dual_averaging_step_size_adaptation',
                             'one_step')):
@@ -449,8 +452,9 @@ class DualAveragingStepSizeAdaptation(kernel_base.TransitionKernel):
       )
 
       # Step the inner kernel.
+      inner_kwargs = {} if seed is None else dict(seed=seed)
       new_state, new_inner_results = self.inner_kernel.one_step(
-          current_state, inner_results)
+          current_state, inner_results, **inner_kwargs)
 
       # Get the new step size.
       log_accept_prob = self.log_accept_prob_getter_fn(new_inner_results)
@@ -505,9 +509,25 @@ class DualAveragingStepSizeAdaptation(kernel_base.TransitionKernel):
 
       state_parts = tf.nest.flatten(init_state)
       step_size_parts = tf.nest.flatten(step_size)
+
+      if self._parameters['shrinkage_target'] is None:
+        shrinkage_target_parts = [None] * len(step_size_parts)
+      else:
+        shrinkage_target_parts = tf.nest.flatten(
+            self._parameters['shrinkage_target'])
+        if len(shrinkage_target_parts) not in [1, len(step_size_parts)]:
+          raise ValueError(
+              '`shrinkage_target` should be a Tensor or list of tensors of '
+              'same length as `step_size`. Found len(`step_size`) = {} and '
+              'len(shrinkage_target) = {}'.format(
+                  len(step_size_parts), len(shrinkage_target_parts)))
+        if len(shrinkage_target_parts) < len(step_size_parts):
+          shrinkage_target_parts *= len(step_size_parts)
+
       dtype = dtype_util.common_dtype(step_size_parts, tf.float32)
       error_sum, log_averaging_step, log_shrinkage_target = [], [], []
-      for state_part, step_size_part in zip(state_parts, step_size_parts):
+      for state_part, step_size_part, shrinkage_target_part in zip(
+          state_parts, step_size_parts, shrinkage_target_parts):
         num_reduce_dims = prefer_static.minimum(
             prefer_static.rank(log_accept_prob),
             prefer_static.rank(state_part) - prefer_static.rank(step_size_part))
@@ -523,11 +543,12 @@ class DualAveragingStepSizeAdaptation(kernel_base.TransitionKernel):
         error_sum.append(tf.zeros_like(reduced_log_accept_prob, dtype=dtype))
         log_averaging_step.append(tf.zeros_like(step_size_part, dtype=dtype))
 
-        if self._parameters['shrinkage_target'] is None:
-          log_shrinkage_target.append(np.log(10.) + tf.math.log(step_size_part))
+        if shrinkage_target_part is None:
+          log_shrinkage_target.append(
+              float(np.log(10.)) + tf.math.log(step_size_part))
         else:
           log_shrinkage_target.append(
-              tf.math.log(self._parameters['shrinkage_target']))
+              tf.math.log(tf.cast(shrinkage_target_part, dtype)))
 
       return DualAveragingStepSizeAdaptationResults(
           inner_results=inner_results,
@@ -554,11 +575,11 @@ def _maybe_validate_target_accept_prob(target_accept_prob, validate_args):
   if not validate_args:
     return target_accept_prob
   assertions = [
-      tf.assert_greater(
+      assert_util.assert_greater(
           target_accept_prob,
           tf.zeros([], dtype=target_accept_prob.dtype),
           message='`target_accept_prob` must be > 0.'),
-      tf.assert_less(
+      assert_util.assert_less(
           target_accept_prob,
           tf.ones([], dtype=target_accept_prob.dtype),
           message='`target_accept_prob` must be < 1.')

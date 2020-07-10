@@ -28,6 +28,7 @@ package(
     default_visibility = [
         "//tensorflow_probability:__subpackages__",
 #         "//tensorflow_probability/google:friends",  # DisableOnExport
+        "//discussion/fun_mcmc:__subpackages__",
     ],
 )
 
@@ -83,6 +84,7 @@ multi_substrate_py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "cache_util_test",
     size = "small",
@@ -105,6 +107,7 @@ py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "docstring_util_test",
     size = "small",
@@ -156,6 +159,7 @@ multi_substrate_py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "distribution_util_test",
     size = "small",
@@ -191,6 +195,7 @@ multi_substrate_py_test(
     ],
 )
 
+# py2and3
 py_test(
     name = "implementation_selection_test_gpu",
     srcs = ["implementation_selection_test.py"],
@@ -226,6 +231,7 @@ multi_substrate_py_library(
     srcs = ["nest_util.py"],
     srcs_version = "PY2AND3",
     deps = [
+        # numpy dep,
         # tensorflow dep,
     ],
 )
@@ -331,6 +337,7 @@ multi_substrate_py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "tensor_util_test",
     size = "small",
@@ -353,7 +360,7 @@ multi_substrate_py_library(
     ],
 )
 
-py_test(
+multi_substrate_py_test(
     name = "tensorshape_util_test",
     size = "small",
     srcs = ["tensorshape_util_test.py"],
@@ -371,6 +378,7 @@ multi_substrate_py_library(
     srcs = ["vectorization_util.py"],
     srcs_version = "PY2AND3",
     deps = [
+        ":samplers",
         # tensorflow dep,
     ],
 )
@@ -390,6 +398,7 @@ multi_substrate_py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "hypothesis_testlib_test",
     size = "small",
@@ -464,7 +473,7 @@ multi_substrate_py_test(
 
 multi_substrate_py_test(
     name = "vectorization_util_test",
-    size = "small",
+    size = "medium",
     srcs = ["vectorization_util_test.py"],
     jax_tags = ["notap"],
     numpy_tags = ["notap"],
@@ -493,6 +502,7 @@ exports_files(
         "test_combinations.py",
         "test_util.py",
         "test_util_test.py",
+        "vectorization_util.py",
     ],
     visibility = [
         "//tensorflow_probability:__subpackages__",

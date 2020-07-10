@@ -50,12 +50,33 @@ __all__ = [
     'make_name',
     'maybe_call_fn_and_grads',
     'prepare_state_parts',
+    'PrettyNamedTupleMixin',
     'safe_sum',
+    'SEED_CTOR_ARG_DEPRECATION_MSG',
     'set_doc',
     'smart_for_loop',
+    'strip_seeds',
     'trace_scan',
     'warn_if_parameters_are_not_simple_tensors',
 ]
+
+
+SEED_CTOR_ARG_DEPRECATION_MSG = (
+    'Seeding `tfp.mcmc.TransitionKernel` instances by constructor argument is '
+    'deprecated. Use the `seed` argument to `tfp.mcmc.sample_chain` or '
+    'directly on `one_step`. The legacy behavior is still supported and should '
+    'be through 2020-09-20.')
+
+
+class PrettyNamedTupleMixin(object):
+  """Mixin adding a nicer `__repr__` for `namedtuple`s."""
+  __slots__ = ()
+
+  def __repr__(self):
+    return '{}(\n{}\n)'.format(
+        type(self).__name__,
+        ',\n'.join('  {}={}'.format(k, repr(v).replace('\n', '\n    '))
+                   for (k, v) in self._asdict().items()))
 
 
 def left_justified_expand_dims_like(x, reference, name=None):
@@ -69,10 +90,10 @@ def left_justified_expand_dims_to(x, rank, name=None):
   with tf.name_scope(name or 'left_justified_expand_dims_to'):
     rank = tf.convert_to_tensor(rank, dtype=tf.int32)
     expand_ndims = prefer_static.maximum(rank - prefer_static.rank(x), 0)
-    expand_shape = prefer_static.pad(
-        prefer_static.shape(x),
-        paddings=[[0, expand_ndims]],
-        constant_values=1)
+    expand_shape = prefer_static.concat(
+        [prefer_static.shape(x),
+         prefer_static.ones(shape=[expand_ndims], dtype=tf.int32)],
+        axis=0)
     return prefer_static.reshape(x, expand_shape)
 
 
@@ -123,48 +144,55 @@ def make_name(super_name, default_super_name, sub_name):
 
 
 def _choose_base_case(is_accepted,
-                      accepted,
-                      rejected,
+                      proposed,
+                      current,
                       name=None):
   """Helper to `choose` which expand_dims `is_accepted` and applies tf.where."""
-  def _where(accepted, rejected):
+  def _where(proposed, current):
     """Wraps `tf.where`."""
-    if accepted is rejected:
-      return accepted
-    # Preserve the name from `rejected` so names can propagate from
+    if proposed is current:
+      return proposed
+    # Preserve the name from `current` so names can propagate from
     # `bootstrap_results`.
-    name = getattr(rejected, 'name', None)
+    name = getattr(current, 'name', None)
     if name is not None:
       name = name.rpartition('/')[2].rsplit(':', 1)[0]
     # Since this is an internal utility it is ok to assume
-    # tf.shape(accepted) == tf.shape(rejected).
-    return tf.where(left_justified_expand_dims_like(is_accepted, accepted),
-                    accepted, rejected, name=name)
+    # tf.shape(proposed) == tf.shape(current).
+    return tf.where(left_justified_expand_dims_like(is_accepted, proposed),
+                    proposed, current, name=name)
   with tf.name_scope(name or 'choose'):
-    if not is_list_like(accepted):
-      return _where(accepted, rejected)
-    return [(choose(is_accepted, a, r, name=name) if is_namedtuple_like(a)
-             else _where(a, r))
-            for a, r in zip(accepted, rejected)]
+    if not is_list_like(proposed):
+      return _where(proposed, current)
+    return [(choose(is_accepted, p, c, name=name) if is_namedtuple_like(p)
+             else _where(p, c))
+            for p, c in zip(proposed, current)]
 
 
-def choose(is_accepted, accepted, rejected, name=None):
+def choose(is_accepted, proposed, current, name=None):
   """Helper which expand_dims `is_accepted` then applies tf.where."""
   with tf.name_scope(name or 'choose'):
-    if not is_namedtuple_like(accepted):
-      return _choose_base_case(is_accepted, accepted, rejected, name=name)
-    if not isinstance(accepted, type(rejected)):
-      raise TypeError('Type of `accepted` ({}) must be identical to '
-                      'type of `rejected` ({})'.format(
-                          type(accepted).__name__,
-                          type(rejected).__name__))
-    return type(accepted)(**dict(
-        [(fn,  # pylint: disable=g-complex-comprehension
-          choose(is_accepted,
-                 getattr(accepted, fn),
-                 getattr(rejected, fn),
-                 name=name))
-         for fn in accepted._fields]))
+    if not is_namedtuple_like(proposed):
+      return _choose_base_case(is_accepted, proposed, current, name=name)
+    if not isinstance(proposed, type(current)):
+      raise TypeError('Type of `proposed` ({}) must be identical to '
+                      'type of `current` ({})'.format(
+                          type(proposed).__name__,
+                          type(current).__name__))
+    items = {}
+    for fn in proposed._fields:
+      items[fn] = choose(is_accepted,
+                         getattr(proposed, fn),
+                         getattr(current, fn),
+                         name=name)
+    return type(proposed)(**items)
+
+
+def strip_seeds(obj):
+  if not is_namedtuple_like(obj):
+    return obj
+  return type(obj)(**{fn: strip_seeds(fv) if fn != 'seed' else []
+                      for fn, fv in obj._asdict().items()})
 
 
 def safe_sum(x, alt_value=-np.inf, name=None):
@@ -613,8 +641,8 @@ def index_remapping_gather(params,
     params = tf.convert_to_tensor(params, name='params')
     indices = tf.convert_to_tensor(indices, name='indices')
 
-    params_ndims = params.shape.ndims
-    indices_ndims = indices.shape.ndims
+    params_ndims = tensorshape_util.rank(params.shape)
+    indices_ndims = tensorshape_util.rank(indices.shape)
     # `axis` dtype must match ndims, which are 64-bit Python ints.
     axis = tf.get_static_value(tf.convert_to_tensor(axis, dtype=tf.int64))
     indices_axis = tf.get_static_value(

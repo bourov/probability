@@ -270,6 +270,7 @@ py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "tensor_array_ops_test",
     size = "small",
@@ -356,11 +357,12 @@ py_library(
     deps = [],
 )
 
+# py2and3
 py_test(
     name = "numpy_test",
     size = "small",
     srcs = ["numpy_test.py"],
-    shard_count = 8,
+    shard_count = 11,
     tags = ["tfp_numpy"],
     deps = [
         ":numpy",
@@ -440,7 +442,7 @@ LINOP_FILES = [
     srcs = [],
     outs = ["{}_gen.py".format(filename)],
     cmd = ("$(location //tensorflow_probability/python/internal/backend/meta:gen_linear_operators) " +
-           "--module_name={} --whitelist={} > $@").format(
+           "--module_name={} --allowlist={} > $@").format(
         filename,
         ",".join(LINOP_FILES),
     ),
@@ -454,7 +456,7 @@ LINOP_FILES = [
     srcs = [],
     outs = ["gen_new/{}.py".format(filename)],
     cmd = ("$(location //tensorflow_probability/python/internal/backend/meta:gen_linear_operators) " +
-           "--module_name={} --whitelist={} > $@").format(
+           "--module_name={} --allowlist={} > $@").format(
         filename,
         ",".join(LINOP_FILES),
     ),
@@ -465,6 +467,7 @@ py_library(
     name = "generated_files",
     testonly = 1,
     srcs = ["gen_new/{}.py".format(filename) for filename in LINOP_FILES],
+    srcs_version = "PY2AND3",
 )
 
 py_library(
@@ -478,6 +481,7 @@ py_library(
     ],
 )
 
+# py2and3
 py_test(
     name = "rewrite_equivalence_test",
     srcs = ["rewrite_equivalence_test.py"],

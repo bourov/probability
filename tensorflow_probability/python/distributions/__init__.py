@@ -72,6 +72,7 @@ from tensorflow_probability.python.distributions.laplace import Laplace
 from tensorflow_probability.python.distributions.linear_gaussian_ssm import LinearGaussianStateSpaceModel
 from tensorflow_probability.python.distributions.lkj import LKJ
 from tensorflow_probability.python.distributions.logistic import Logistic
+from tensorflow_probability.python.distributions.loglogistic import LogLogistic
 from tensorflow_probability.python.distributions.lognormal import LogNormal
 from tensorflow_probability.python.distributions.logitnormal import LogitNormal
 from tensorflow_probability.python.distributions.mixture import Mixture
@@ -94,6 +95,7 @@ from tensorflow_probability.python.distributions.pixel_cnn import PixelCNN
 from tensorflow_probability.python.distributions.plackett_luce import PlackettLuce
 from tensorflow_probability.python.distributions.poisson import Poisson
 from tensorflow_probability.python.distributions.poisson_lognormal import PoissonLogNormalQuadratureCompound
+from tensorflow_probability.python.distributions.power_spherical import PowerSpherical
 from tensorflow_probability.python.distributions.probit_bernoulli import ProbitBernoulli
 from tensorflow_probability.python.distributions.quantized_distribution import QuantizedDistribution
 from tensorflow_probability.python.distributions.relaxed_bernoulli import RelaxedBernoulli
@@ -101,6 +103,7 @@ from tensorflow_probability.python.distributions.relaxed_onehot_categorical impo
 from tensorflow_probability.python.distributions.relaxed_onehot_categorical import RelaxedOneHotCategorical
 from tensorflow_probability.python.distributions.sample import Sample
 from tensorflow_probability.python.distributions.sinh_arcsinh import SinhArcsinh
+from tensorflow_probability.python.distributions.spherical_uniform import SphericalUniform
 from tensorflow_probability.python.distributions.student_t import StudentT
 from tensorflow_probability.python.distributions.student_t_process import StudentTProcess
 from tensorflow_probability.python.distributions.transformed_distribution import TransformedDistribution
@@ -111,6 +114,7 @@ from tensorflow_probability.python.distributions.variational_gaussian_process im
 from tensorflow_probability.python.distributions.vector_exponential_diag import VectorExponentialDiag
 from tensorflow_probability.python.distributions.von_mises import VonMises
 from tensorflow_probability.python.distributions.von_mises_fisher import VonMisesFisher
+from tensorflow_probability.python.distributions.weibull import Weibull
 from tensorflow_probability.python.distributions.wishart import WishartLinearOperator
 from tensorflow_probability.python.distributions.wishart import WishartTriL
 from tensorflow_probability.python.distributions.zipf import Zipf
@@ -195,6 +199,7 @@ __all__ = [
     'Laplace',
     'LKJ',
     'Logistic',
+    'LogLogistic',
     'LogNormal',
     'LogitNormal',
     'Moyal',
@@ -206,6 +211,7 @@ __all__ = [
     'ProbitBernoulli',
     'Sample',
     'SinhArcsinh',
+    'SphericalUniform',
     'StudentT',
     'StudentTProcess',
     'Triangular',
@@ -222,6 +228,7 @@ __all__ = [
     'Multinomial',
     'VonMises',
     'VonMisesFisher',
+    'Weibull',
     'WishartLinearOperator',
     'WishartTriL',
     'TransformedDistribution',
@@ -234,6 +241,7 @@ __all__ = [
     'Pareto',
     'PERT',
     'PlackettLuce',
+    'PowerSpherical',
     'RelaxedBernoulli',
     'RelaxedOneHotCategorical',
     'Zipf',
